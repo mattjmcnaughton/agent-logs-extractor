@@ -9,6 +9,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -141,12 +142,11 @@ func forbidden(p string) string {
 	// Positive stdlib check, not just the "first path segment contains a
 	// dot" heuristic: a third-party module need not have a dot in its
 	// first path element (e.g. a short-form path under a dot-free host),
-	// so the heuristic alone can be fooled. go/build's Import resolves p
-	// against GOROOT purely from local files — no network, no module
-	// cache, safe in a cold-cache CI sandbox — and reports whether it
-	// landed under GOROOT. Reject if EITHER check says third-party:
+	// so the heuristic alone can be fooled. isStdlib checks for a matching
+	// directory under GOROOT/src directly, with no subprocess and no
+	// module resolution involved. Reject if EITHER check says third-party:
 	// belt and braces, since the heuristic is cheap and catches the
-	// common case even if a future go/build change ever misbehaved.
+	// common case even if a future GOROOT layout ever misbehaved.
 	first, _, _ := strings.Cut(p, "/")
 	if strings.Contains(first, ".") || !isStdlib(p) {
 		return "third-party packages are not allowed in the core"
@@ -174,16 +174,12 @@ func forbidden(p string) string {
 	return ""
 }
 
-// isStdlib reports whether p resolves to a package under GOROOT. It uses
-// go/build.Import in FindOnly mode, which only walks local directories
-// (GOROOT/src and, for non-stdlib paths, GOPATH/vendor) — it never touches
-// the network or the module cache, so it is safe and fast even with a cold
-// cache in CI. Any resolution failure is treated as "not stdlib", which
-// only makes forbidden() stricter, never looser.
+// isStdlib reports whether p resolves to a package under GOROOT. It checks
+// directly for a directory at GOROOT/src/<p> — no subprocess, no module
+// resolution. Any resolution failure (the directory doesn't exist, or isn't
+// a directory) is treated as "not stdlib", which only makes forbidden()
+// stricter, never looser.
 func isStdlib(p string) bool {
-	pkg, err := build.Import(p, "", build.FindOnly)
-	if err != nil {
-		return false
-	}
-	return pkg.Goroot
+	fi, err := os.Stat(filepath.Join(build.Default.GOROOT, "src", p))
+	return err == nil && fi.IsDir()
 }
