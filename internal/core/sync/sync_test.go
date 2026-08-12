@@ -1,10 +1,12 @@
 package sync
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/model"
@@ -58,5 +60,24 @@ func TestNewWithDuplicateVendorKeepsTheLaterSourceAndIsSafeWithANilLogger(t *tes
 
 	if got := s.sources[model.VendorClaude]; got != ports.ConversationSource(second) {
 		t.Errorf("sources[claude] = %p, want the later-registered source %p (last one wins)", got, second)
+	}
+}
+
+// TestNewWithDuplicateVendorLogsTheWarning covers the log.Warn statement
+// itself, which the nil-logger test above can't reach: a nil log is
+// normalized to a discard handler, so nothing written to it is ever
+// observable. With a real handler backing a buffer, the duplicate
+// registration must actually produce a message naming the vendor.
+func TestNewWithDuplicateVendorLogsTheWarning(t *testing.T) {
+	first := fakes.NewConversationSource(model.VendorClaude)
+	second := fakes.NewConversationSource(model.VendorClaude)
+
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+
+	New([]ports.ConversationSource{first, second}, fakes.NewCanonicalStore(), log)
+
+	if got := buf.String(); !strings.Contains(got, "duplicate") || !strings.Contains(got, string(model.VendorClaude)) {
+		t.Errorf("log output = %q, want it to mention the duplicate vendor %q", got, model.VendorClaude)
 	}
 }
