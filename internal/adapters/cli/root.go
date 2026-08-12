@@ -3,8 +3,8 @@
 package cli
 
 import (
+	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -27,6 +27,13 @@ type Deps struct {
 	// DefaultExportOut is the default `export duckdb` destination resolved
 	// in wiring; --out overrides it.
 	DefaultExportOut string
+	// Level backs the one logger wiring injects into the use cases
+	// (sync.New, export.New). Wiring seeds it from
+	// AGENT_LOGS_EXTRACTOR_LOG_LEVEL, else info; --log-level, if passed,
+	// overrides it in PersistentPreRunE. There is exactly one logger and
+	// one level var — the flag and the env var both resolve into it,
+	// rather than each driving a logger of its own.
+	Level *slog.LevelVar
 }
 
 func NewRoot(deps Deps) *cobra.Command {
@@ -39,15 +46,15 @@ func NewRoot(deps Deps) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			return setupLogging(logLevel)
+			return applyLogLevel(deps.Level, logLevel)
 		},
 	}
 
 	root.PersistentFlags().StringVar(
 		&logLevel,
 		"log-level",
-		"info",
-		"Log level (debug, info, warn, error)",
+		"",
+		"Log level (debug, info, warn, error); overrides AGENT_LOGS_EXTRACTOR_LOG_LEVEL if set, defaults to info",
 	)
 
 	root.AddCommand(
@@ -59,12 +66,21 @@ func NewRoot(deps Deps) *cobra.Command {
 	return root
 }
 
-func setupLogging(level string) error {
-	var l slog.Level
-	if err := l.UnmarshalText([]byte(level)); err != nil {
-		l = slog.LevelInfo
+// applyLogLevel parses s and sets it on level, when s is non-empty. An
+// empty s (the flag was not passed) leaves level exactly as wiring seeded
+// it from AGENT_LOGS_EXTRACTOR_LOG_LEVEL. A nil level (as in tests that
+// construct Deps{} directly) is a safe no-op rather than a panic; an
+// invalid s is a real error, not silently swallowed to info.
+func applyLogLevel(level *slog.LevelVar, s string) error {
+	if s == "" {
+		return nil
 	}
-	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: l})
-	slog.SetDefault(slog.New(handler))
+	var l slog.Level
+	if err := l.UnmarshalText([]byte(s)); err != nil {
+		return fmt.Errorf("invalid --log-level %q: %w", s, err)
+	}
+	if level != nil {
+		level.Set(l)
+	}
 	return nil
 }

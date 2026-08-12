@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -28,15 +29,7 @@ func newSyncCmd(deps Deps) *cobra.Command {
 				model.VendorClaude: claudePath,
 				model.VendorCodex:  codexPath,
 			}
-
-			req := sync.Request{}
-			for _, v := range vendors {
-				root := overrides[v]
-				if root == "" {
-					root = deps.DefaultRoots[v]
-				}
-				req.Sources = append(req.Sources, sync.SourceRequest{Vendor: v, Root: root})
-			}
+			req := syncRequest(vendors, overrides, deps.DefaultRoots)
 
 			// TODO(#8): format the ingest summary.
 			_, err = deps.Sync.Run(cmd.Context(), req)
@@ -64,4 +57,20 @@ func selectedVendors(vendor string) ([]model.Vendor, error) {
 	default:
 		return nil, fmt.Errorf("unknown vendor %q: accepted values are %q, %q", vendor, model.VendorClaude, model.VendorCodex)
 	}
+}
+
+// syncRequest maps vendors (the set --vendor selected), overrides
+// (--claude-path / --codex-path, empty when not passed), and defaults
+// (wiring's per-vendor roots) onto a sync.Request: one SourceRequest per
+// vendor, each rooted at its override if one was given, else its default.
+// A vendor not in vendors contributes nothing, so an override for a vendor
+// --vendor excluded is silently ignored, matching the flag's documented
+// scope.
+func syncRequest(vendors []model.Vendor, overrides, defaults map[model.Vendor]string) sync.Request {
+	req := sync.Request{}
+	for _, v := range vendors {
+		root := cmp.Or(overrides[v], defaults[v])
+		req.Sources = append(req.Sources, sync.SourceRequest{Vendor: v, Root: root})
+	}
+	return req
 }

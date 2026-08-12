@@ -18,7 +18,15 @@ import (
 )
 
 func main() {
-	log := newLogger()
+	// One logger, one level, one owner: level starts from
+	// AGENT_LOGS_EXTRACTOR_LOG_LEVEL (else info), and cli's
+	// PersistentPreRunE mutates the same LevelVar from --log-level when
+	// that flag is passed, so the flag and the env var both drive the one
+	// handler every use case logs through.
+	level := new(slog.LevelVar)
+	level.Set(resolveLevel(os.Getenv("AGENT_LOGS_EXTRACTOR_LOG_LEVEL")))
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+
 	paths := defaultPaths()
 
 	// Driven adapters land here as their tickets close:
@@ -36,6 +44,7 @@ func main() {
 		Export:           export.New(store, exporters, log),
 		DefaultRoots:     paths.vendorRoots,
 		DefaultExportOut: paths.exportOut,
+		Level:            level,
 	}
 
 	if err := cli.NewRoot(deps).Execute(); err != nil {
@@ -44,24 +53,21 @@ func main() {
 	}
 }
 
-// newLogger builds the logger injected into adapters and use cases. The
-// level comes from AGENT_LOGS_EXTRACTOR_LOG_LEVEL (the --log-level flag
-// tunes the process-global default logger separately, in the CLI adapter).
-func newLogger() *slog.Logger {
-	var level slog.Level
-	if err := level.UnmarshalText([]byte(os.Getenv("AGENT_LOGS_EXTRACTOR_LOG_LEVEL"))); err != nil {
-		level = slog.LevelInfo
+// resolveLevel parses s as a slog.Level, falling back to info when s is
+// empty or invalid.
+func resolveLevel(s string) slog.Level {
+	var l slog.Level
+	if err := l.UnmarshalText([]byte(s)); err != nil {
+		return slog.LevelInfo
 	}
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	return l
 }
 
 // resolvedPaths are the tool's default on-disk locations, resolved from the
 // environment (README "File layout" / "Sandboxing").
 type resolvedPaths struct {
 	vendorRoots map[model.Vendor]string
-	// storeRoot is unused until #7 wires a CanonicalStore adapter.
-	storeRoot string
-	exportOut string
+	exportOut   string
 }
 
 // defaultPaths resolves the tool's default paths from
@@ -83,7 +89,6 @@ func defaultPaths() resolvedPaths {
 			model.VendorClaude: filepath.Join(home, ".claude"),
 			model.VendorCodex:  filepath.Join(home, ".codex"),
 		},
-		storeRoot: filepath.Join(home, ".local", "share", "agent-logs-extractor", "store"),
 		exportOut: filepath.Join(home, ".local", "share", "agent-logs-extractor", "export", "logs.duckdb"),
 	}
 }
