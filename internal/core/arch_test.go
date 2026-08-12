@@ -5,6 +5,7 @@ package core
 
 import (
 	"fmt"
+	"go/build"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -33,7 +34,18 @@ func TestCorePurity(t *testing.T) {
 		if walkErr != nil {
 			return walkErr
 		}
-		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		if d.IsDir() {
+			// testdata/ is ignored by the Go toolchain itself; scanning it
+			// risks both false positives (fixtures aren't subject to the
+			// purity rule) and a t.Fatal on a deliberately-malformed .go
+			// fixture, which would abort the walk before it reports any
+			// real violation.
+			if d.Name() == "testdata" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
 		scanned++
@@ -82,6 +94,12 @@ func TestForbidden(t *testing.T) {
 		// just because of the string prefix.
 		modulePath + "/internal/portsx",
 		modulePath + "/internal/coreish",
+		// Dot-free third-party import: the old "first segment contains a
+		// dot" heuristic alone would miss this (a module path need not
+		// have a dot in its first element); the positive stdlib check in
+		// isStdlib catches it because go/build can't resolve it to
+		// anything under GOROOT.
+		"corp/shellout",
 	}
 	for _, p := range wantForbidden {
 		if reason := forbidden(p); reason == "" {
@@ -120,8 +138,17 @@ func forbidden(p string) string {
 		}
 		return "core may import only internal/ports and internal/core from this module"
 	}
+	// Positive stdlib check, not just the "first path segment contains a
+	// dot" heuristic: a third-party module need not have a dot in its
+	// first path element (e.g. a short-form path under a dot-free host),
+	// so the heuristic alone can be fooled. go/build's Import resolves p
+	// against GOROOT purely from local files — no network, no module
+	// cache, safe in a cold-cache CI sandbox — and reports whether it
+	// landed under GOROOT. Reject if EITHER check says third-party:
+	// belt and braces, since the heuristic is cheap and catches the
+	// common case even if a future go/build change ever misbehaved.
 	first, _, _ := strings.Cut(p, "/")
-	if strings.Contains(first, ".") {
+	if strings.Contains(first, ".") || !isStdlib(p) {
 		return "third-party packages are not allowed in the core"
 	}
 	// Denylist by family, not by exact string: every OS-facing stdlib
@@ -145,4 +172,18 @@ func forbidden(p string) string {
 		return "the core must not embed files; use a port"
 	}
 	return ""
+}
+
+// isStdlib reports whether p resolves to a package under GOROOT. It uses
+// go/build.Import in FindOnly mode, which only walks local directories
+// (GOROOT/src and, for non-stdlib paths, GOPATH/vendor) — it never touches
+// the network or the module cache, so it is safe and fast even with a cold
+// cache in CI. Any resolution failure is treated as "not stdlib", which
+// only makes forbidden() stricter, never looser.
+func isStdlib(p string) bool {
+	pkg, err := build.Import(p, "", build.FindOnly)
+	if err != nil {
+		return false
+	}
+	return pkg.Goroot
 }
