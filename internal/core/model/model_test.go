@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/json"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -197,6 +198,61 @@ func TestSessionDocOmitsNullableFieldsAndKeepsZeroSeq(t *testing.T) {
 
 	if !strings.Contains(body, `"seq":0`) {
 		t.Errorf(`expected "seq":0 to be present for a zero-value Seq; got %s`, body)
+	}
+}
+
+// TestZeroValueKeySets guards against someone spuriously adding omitempty
+// to an always-populated field. TestSessionDocOmitsNullableFieldsAndKeepsZeroSeq
+// only checks that a handful of specific keys are absent/present; it would
+// not notice if, say, "text" or "session_id" also started disappearing on
+// zero values. Here we marshal the zero value of each struct and assert
+// the exact key set: only the four genuinely nullable columns (git_branch,
+// parent_message_id, model, output) may vanish. Anything else missing from
+// the zero-value marshal means a field just gained omitempty it shouldn't
+// have — and per the model package's #9 note, an omitempty'd column
+// disappears entirely from DuckDB's read_json auto-detection.
+func TestZeroValueKeySets(t *testing.T) {
+	t.Run("Session", func(t *testing.T) {
+		assertExactKeySet(t, Session{}, []string{
+			"session_id", "vendor", "project_path", "project_name",
+			"started_at", "ended_at", "vendor_version", "source_path",
+		})
+	})
+	t.Run("Message", func(t *testing.T) {
+		assertExactKeySet(t, Message{}, []string{
+			"message_id", "session_id", "seq", "role", "created_at",
+			"text", "raw",
+		})
+	})
+	t.Run("ToolCall", func(t *testing.T) {
+		assertExactKeySet(t, ToolCall{}, []string{
+			"tool_call_id", "session_id", "message_id", "seq", "tool_name",
+			"arguments", "status", "created_at",
+		})
+	})
+}
+
+// assertExactKeySet marshals v and fails the test unless its top-level JSON
+// object's key set is exactly want.
+func assertExactKeySet(t *testing.T, v any, want []string) {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	got := make([]string, 0, len(m))
+	for k := range m {
+		got = append(got, k)
+	}
+	sort.Strings(got)
+	wantSorted := append([]string(nil), want...)
+	sort.Strings(wantSorted)
+	if !reflect.DeepEqual(got, wantSorted) {
+		t.Errorf("zero-value key set = %v, want %v (marshaled: %s)", got, wantSorted, b)
 	}
 }
 
