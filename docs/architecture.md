@@ -10,19 +10,19 @@ for structured logging. It follows the same shape as `fetch-context`.
 
 ```
 cmd/agent-logs-extractor/
-  main.go               # Wiring: env → adapters → use cases → cobra root
+  main.go          # Wiring: env → adapters → use cases → cobra root
 internal/
-  core/                 # Pure use cases + domain model, zero infra imports
-    model/                # Unified data model (SessionDoc/Session/Message/ToolCall)
-    sync/                  # Sync use case
-    export/                 # Export use case
-  ports/                 # Interfaces the core depends on
+  core/            # Pure use cases + domain model, zero infra imports
+    model/         # Unified data model (SessionDoc/Session/Message/ToolCall)
+    sync/          # Sync use case
+    export/        # Export use case
+  ports/           # Interfaces the core depends on
   adapters/
-    cli/                  # Cobra subcommands (thin shims), one file each
+    cli/           # Cobra subcommands (thin shims), one file each
   testing/
-    fakes/                # In-memory fakes for every port
-    logfixture/            # Verbatim vendor log fixtures
-  version/               # Version string
+    fakes/         # In-memory fakes for every port
+    logfixture/    # Verbatim vendor log fixtures
+  version/         # Version string
 ```
 
 Concrete adapters (source parsers, the canonical store, the DuckDB exporter)
