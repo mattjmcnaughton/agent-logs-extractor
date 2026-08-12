@@ -2,7 +2,9 @@
 
 Parse AI coding agent conversation logs (Claude Code, Codex) into a unified, queryable data model
 
-Go CLI using Cobra, Viper, slog, and Go toolchain (gofmt, go vet, go test).
+Go CLI built with strict hexagonal (ports-and-adapters) architecture: Cobra
+as the driving adapter, slog for logging, and the Go toolchain (gofmt, go
+vet, go test).
 
 ## Quick Reference
 
@@ -24,29 +26,46 @@ Go CLI using Cobra, Viper, slog, and Go toolchain (gofmt, go vet, go test).
 
 ```
 cmd/agent-logs-extractor/
-  main.go               # Entrypoint — calls cli.NewRoot().Execute()
+  main.go               # Wiring: env → adapters → use cases → cobra root
 internal/
-  cli/
-    root.go             # Cobra root command, Viper setup, slog init
-    example.go          # Example subcommand (replace with real commands)
-  config/
-    config.go           # Config struct, loaded from env vars via Viper
+  core/
+    model/               # Unified data model (SessionDoc/Session/Message/ToolCall)
+    sync/                 # Sync use case
+    export/                # Export use case
+  ports/                 # Interfaces the core depends on
+  adapters/
+    cli/                  # Cobra subcommands, one file each (thin shims)
+  testing/
+    fakes/                # In-memory fakes for every port
+    logfixture/            # Verbatim vendor log fixtures (never hand-edit)
   version/
-    version.go          # Version string (injectable via ldflags)
+    version.go            # Version string (injectable via ldflags)
 docs/
-  adrs/                 # Architecture Decision Records
-  architecture.md       # System architecture overview
-  development.md        # Dev setup and common tasks
+  adrs/                  # Architecture Decision Records
+  architecture.md        # System architecture overview
+  development.md         # Dev setup and common tasks
 ```
 
 ## Key Conventions
 
-- **Commands** live in `internal/cli/`. Each command is a thin I/O wrapper:
-  parse args, call business logic, emit output.
-- **Business logic** should move to `internal/services/` as the project grows.
-- **Configuration** is loaded from environment variables via Viper.
-  Variables are prefixed with `AGENT_LOGS_EXTRACTOR_`
-  (e.g. `AGENT_LOGS_EXTRACTOR_LOG_LEVEL=debug`).
+- **`internal/core` imports no infrastructure.** No `os`, `net/http`,
+  `os/exec`, or third-party SDKs — only the rest of the stdlib,
+  `internal/ports`, and `internal/core` itself. Mechanically enforced by
+  `internal/core/arch_test.go`.
+- **One port per external dependency.** A new external dependency gets a
+  new interface in `internal/ports/`; adapters implement it.
+- **One file per cobra subcommand** under `internal/adapters/cli/`. Each is
+  a thin shim: parse args, call a use case, emit output.
+- **Wiring only in `main.go`.** It is the only file that imports every
+  concrete adapter.
+- **No config file.** Behavior is controlled by flags, plus
+  `AGENT_LOGS_EXTRACTOR_HOME` / `AGENT_LOGS_EXTRACTOR_LOG_LEVEL` read in
+  wiring.
+- **Fakes over mocks.** Hand-written in-memory fakes live in
+  `internal/testing/fakes/`; tests assert on outcomes, never on call
+  sequences.
+- **Fixtures are verbatim ground truth.** `internal/testing/logfixture/`
+  holds real (scrubbed) vendor log files — never hand-edit or move them.
 - **Integration tests** use the `//go:build integration` build tag.
 - **Version** is defined as `"dev"` by default and overridden at build time
   with `-ldflags "-X github.com/mattjmcnaughton/agent-logs-extractor/internal/version.Version=x.y.z"`.

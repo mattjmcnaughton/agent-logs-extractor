@@ -2,27 +2,46 @@
 
 ## Overview
 
-agent-logs-extractor is a Go CLI built with Cobra and Viper, using stdlib slog for structured logging.
+agent-logs-extractor is a Go CLI built with strict hexagonal
+(ports-and-adapters) architecture: Cobra as the driving adapter, stdlib slog
+for structured logging. It follows the same shape as `fetch-context`.
 
 ## Project Structure
 
 ```
 cmd/agent-logs-extractor/
-  main.go               # Entrypoint
+  main.go               # Wiring: env → adapters → use cases → cobra root
 internal/
-  cli/                  # Cobra command definitions (thin I/O layer)
-  config/               # Viper-backed configuration
-  version/              # Version string
+  core/                 # Pure use cases + domain model, zero infra imports
+    model/                # Unified data model (SessionDoc/Session/Message/ToolCall)
+    sync/                  # Sync use case
+    export/                 # Export use case
+  ports/                 # Interfaces the core depends on
+  adapters/
+    cli/                  # Cobra subcommands (thin shims), one file each
+  testing/
+    fakes/                # In-memory fakes for every port
+    logfixture/            # Verbatim vendor log fixtures
+  version/               # Version string
 ```
+
+Concrete adapters (source parsers, the canonical store, the DuckDB exporter)
+land as their tickets close; the port and use-case shapes above are frozen
+by this ticket for them to build against.
 
 ## Layering
 
 ```
-main.go
-  -> cli.NewRoot()          (Cobra root, Viper setup, slog init)
-    -> subcommands          (parse args, call business logic, emit output)
-      -> services/          (business logic — add as needed)
+main.go (wiring)
+  -> constructs adapters, injects them into use cases
+  -> cli.NewRoot(deps)      (Cobra root; each subcommand is a thin shim)
+    -> internal/core/*      (use cases: parse args in, call use case, emit output)
+      -> internal/ports/*   (interfaces the use cases depend on)
 ```
+
+`internal/core` never imports infrastructure (`os`, `net/http`, `os/exec`,
+third-party SDKs) — only the rest of the stdlib, `internal/ports`, and
+itself. This is mechanically enforced by `internal/core/arch_test.go`.
 
 ## Toolchain
 
@@ -30,7 +49,6 @@ main.go
 | ---- | ------- |
 | Go | Language and standard library |
 | Cobra | CLI framework and subcommand routing |
-| Viper | Environment variable configuration |
 | slog | Structured logging (stdlib) |
 | gofmt | Formatting |
 | go vet | Static analysis |
@@ -39,18 +57,20 @@ main.go
 
 ## Configuration
 
-All configuration is loaded from environment variables via Viper.
-Variables are prefixed with `AGENT_LOGS_EXTRACTOR_`.
-Add fields to `internal/config/config.go` and call `config.Load()` from commands.
+There is no config file. Behavior is controlled by flags, plus
+`AGENT_LOGS_EXTRACTOR_HOME` / `AGENT_LOGS_EXTRACTOR_LOG_LEVEL`, both read
+once in `main.go` (wiring).
 
 ## Testing
 
 - Unit tests: standard `go test ./...`
 - Integration tests: tagged with `//go:build integration`, run via `just test-integration`
 - No test framework required — use stdlib `testing` package
+- Fakes over mocks: hand-written in-memory fakes in `internal/testing/fakes/`
 
 ## Conventions
 
-- Commands are thin I/O wrappers. Business logic lives in services.
+- Commands are thin I/O wrappers over use cases in `internal/core/`.
 - Errors are returned from `RunE`, not `Run`, so Cobra handles them cleanly.
+- One port per external dependency; wiring only in `main.go`.
 - Version is injected at build time via ldflags; defaults to `"dev"`.

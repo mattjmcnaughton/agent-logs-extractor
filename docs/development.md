@@ -32,7 +32,7 @@ just test-all
 just build
 
 # Run directly
-just run example
+just run version
 
 # Full pre-push check
 just gate
@@ -58,7 +58,13 @@ go build -ldflags "-X github.com/mattjmcnaughton/agent-logs-extractor/internal/v
 
 ## Adding a New Command
 
-1. Create `internal/cli/<name>.go` with a `newNameCmd()` function.
-2. Register it in `internal/cli/root.go` via `root.AddCommand(newNameCmd())`.
-3. Keep the command thin — parse args, call a function, emit output.
-4. Add business logic to `internal/services/` as the project grows.
+1. Add a use case under `internal/core/` (a new package with its own
+   `Request`/`Run`, following `internal/core/sync/` or
+   `internal/core/export/`).
+2. If it needs a new external dependency, add a port in `internal/ports/`
+   and an adapter under `internal/adapters/` implementing it.
+3. Add a thin shim file under `internal/adapters/cli/<name>.go` with a
+   `newNameCmd(deps Deps)` function, and register it in
+   `internal/adapters/cli/root.go` via `root.AddCommand(newNameCmd(deps))`.
+4. Wire the new use case and any new adapters into `cli.Deps` in
+   `cmd/agent-logs-extractor/main.go`.
