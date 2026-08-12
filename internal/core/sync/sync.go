@@ -38,7 +38,7 @@ type VendorSummary struct {
 	// Skipped counts skipped records by reason across the vendor's files;
 	// nil means none. `sync` prints the total and logs the breakdown at
 	// debug level.
-	Skipped map[model.SkipReason]int
+	Skipped model.SkipCounts
 }
 
 // Summary is the ingest accounting one sync run reports (US-1).
@@ -54,11 +54,18 @@ type Sync struct {
 }
 
 // New indexes the available sources by vendor. A Request naming a vendor
-// with no registered source is an error at Run time.
+// with no registered source is an error at Run time. Two sources reporting
+// the same vendor is a wiring mistake, not a valid configuration: the
+// later one wins and is logged at warn, rather than silently dropping the
+// earlier one.
 func New(sources []ports.ConversationSource, store ports.CanonicalStore, log *slog.Logger) *Sync {
 	indexed := make(map[model.Vendor]ports.ConversationSource, len(sources))
 	for _, s := range sources {
-		indexed[s.Vendor()] = s
+		vendor := s.Vendor()
+		if _, dup := indexed[vendor]; dup && log != nil {
+			log.Warn("sync: duplicate vendor source registered; the later one wins", "vendor", vendor)
+		}
+		indexed[vendor] = s
 	}
 	return &Sync{sources: indexed, store: store, log: log}
 }
