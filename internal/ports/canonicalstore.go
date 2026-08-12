@@ -23,7 +23,9 @@ type CanonicalStore interface {
 	BeginRebuild(ctx context.Context) (StoreRebuild, error)
 }
 
-// StoreRebuild accumulates one pending store generation.
+// StoreRebuild accumulates one pending store generation. Once the rebuild
+// is finished — committed or discarded — Put and Commit return an error;
+// the generation is gone.
 type StoreRebuild interface {
 	// Put writes one session doc into the pending generation. Putting the
 	// same session id twice replaces the earlier doc.
