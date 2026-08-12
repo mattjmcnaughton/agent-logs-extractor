@@ -32,11 +32,18 @@ type Export struct {
 	log       *slog.Logger
 }
 
-// New indexes the available sinks by name.
+// New indexes the available sinks by name. Two exporters reporting the
+// same Name() is a wiring mistake, not a valid configuration: the later
+// one wins and is logged at warn, rather than silently dropping the
+// earlier one.
 func New(store ports.CanonicalStore, exporters []ports.Exporter, log *slog.Logger) *Export {
 	indexed := make(map[string]ports.Exporter, len(exporters))
 	for _, e := range exporters {
-		indexed[e.Name()] = e
+		name := e.Name()
+		if _, dup := indexed[name]; dup && log != nil {
+			log.Warn("export: duplicate sink name registered; the later one wins", "sink", name)
+		}
+		indexed[name] = e
 	}
 	return &Export{store: store, exporters: indexed, log: log}
 }
