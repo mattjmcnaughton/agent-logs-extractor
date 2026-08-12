@@ -1,17 +1,25 @@
 // Package fakes provides hand-written in-memory fakes for every port, used
 // by the unit tests in internal/core/. They can be seeded with canned data
 // and scripted to fail. Tests assert on their observable state — what a
-// commit left in the store, what a sink was asked to produce — never on
-// call sequences.
+// commit left in the store, what a sink was asked to produce, *which*
+// paths a source read — never on the order calls happened in or how many
+// times a method ran.
 package fakes
 
 import (
 	"context"
-	"sort"
+	"errors"
+	"maps"
+	"slices"
 
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/model"
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/ports"
 )
+
+// errRebuildFinished is returned by FakeStoreRebuild once a rebuild has
+// been committed or discarded: a real store rejects writes to a swapped-out
+// generation, and the fake must too.
+var errRebuildFinished = errors.New("fakes: rebuild already finished")
 
 // FakeConversationSource implements ports.ConversationSource.
 type FakeConversationSource struct {
@@ -21,8 +29,15 @@ type FakeConversationSource struct {
 	Stats      map[string]model.ParseStats // canned parse accounting per path
 	ListErrs   map[string]error            // scripted failures by root
 	ParseErrs  map[string]error            // scripted failures by path
-	Listed     []string                    // roots listed
-	Parsed     []string                    // paths parsed
+	// Listed is the set of roots List was asked about — an outcome tests
+	// can assert against (e.g. "codex was never listed when --vendor
+	// claude was passed"), not a call sequence, so callers must sort
+	// before comparing.
+	Listed []string
+	// Parsed is the set of paths Parse was asked to read — an outcome
+	// tests can assert against (e.g. "every seeded path got parsed"), not
+	// a call sequence, so callers must sort before comparing.
+	Parsed []string
 }
 
 // NewConversationSource allocates a source reporting vendor, with all
@@ -58,13 +73,8 @@ func (s *FakeConversationSource) List(ctx context.Context, root string) ([]strin
 	if err := s.ListErrs[root]; err != nil {
 		return nil, err
 	}
-	paths := s.Paths[root]
-	if paths == nil {
-		return nil, nil
-	}
-	sorted := make([]string, len(paths))
-	copy(sorted, paths)
-	sort.Strings(sorted)
+	sorted := slices.Clone(s.Paths[root])
+	slices.Sort(sorted)
 	return sorted, nil
 }
 
@@ -116,12 +126,7 @@ func (s *FakeCanonicalStore) BeginRebuild(ctx context.Context) (ports.StoreRebui
 // SessionIDs is the sorted set of ids in the live store — a stable
 // assertion surface.
 func (s *FakeCanonicalStore) SessionIDs() []string {
-	ids := make([]string, 0, len(s.Committed))
-	for id := range s.Committed {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	return ids
+	return slices.Sorted(maps.Keys(s.Committed))
 }
 
 // FakeStoreRebuild implements ports.StoreRebuild.
@@ -132,8 +137,13 @@ type FakeStoreRebuild struct {
 }
 
 // Put stores doc into the pending generation, keyed by session id, or
-// returns PutErrs[doc.Session.SessionID] if scripted.
+// returns PutErrs[doc.Session.SessionID] if scripted. Once the rebuild has
+// finished (Commit or Discard), Put returns errRebuildFinished rather than
+// silently writing into a generation nothing can observe.
 func (r *FakeStoreRebuild) Put(ctx context.Context, doc model.SessionDoc) error {
+	if r.done {
+		return errRebuildFinished
+	}
 	if err := r.store.PutErrs[doc.Session.SessionID]; err != nil {
 		return err
 	}
@@ -142,24 +152,36 @@ func (r *FakeStoreRebuild) Put(ctx context.Context, doc model.SessionDoc) error 
 }
 
 // Commit returns CommitErr if scripted, leaving the live store untouched;
-// otherwise it replaces the live store wholesale with the pending
-// generation — a full rebuild, not a merge.
+// otherwise it replaces the live store wholesale with a copy of the
+// pending generation — a full rebuild, not a merge — and marks the
+// rebuild finished. A copy, not the pending map itself, is stored so a
+// later (rejected) Put on this rebuild can never alias into the live
+// store. Commit after Discard, or a second Commit, returns
+// errRebuildFinished and leaves the live store exactly as it was.
 func (r *FakeStoreRebuild) Commit(ctx context.Context) error {
+	if r.done {
+		return errRebuildFinished
+	}
 	if err := r.store.CommitErr; err != nil {
 		return err
 	}
-	r.store.Committed = r.pending
+	r.store.Committed = maps.Clone(r.pending)
 	r.done = true
 	return nil
 }
 
-// Discard clears the pending generation. It is a no-op once Commit has
-// run, and safe to call twice.
+// Discard drops the pending generation and marks the rebuild finished,
+// leaving the live store untouched. It is not an error to call it after
+// Commit or a previous Discard — it is simply a no-op then — but it does
+// finish the rebuild, so a Commit that follows a Discard is rejected by
+// Commit's own done check rather than resurrecting the discarded
+// generation.
 func (r *FakeStoreRebuild) Discard() error {
 	if r.done {
 		return nil
 	}
-	r.pending = make(map[string]model.SessionDoc)
+	r.done = true
+	r.pending = nil
 	return nil
 }
 
@@ -184,14 +206,6 @@ func (e *FakeExporter) Name() string {
 func (e *FakeExporter) Export(ctx context.Context, req ports.ExportRequest) error {
 	e.Requests = append(e.Requests, req)
 	return e.Err
-}
-
-// LastRequest is the most recent Export request, or the zero value if none.
-func (e *FakeExporter) LastRequest() ports.ExportRequest {
-	if len(e.Requests) == 0 {
-		return ports.ExportRequest{}
-	}
-	return e.Requests[len(e.Requests)-1]
 }
 
 // Interface conformance.
