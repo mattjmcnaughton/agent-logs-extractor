@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spf13/cobra"
-
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/version"
 )
 
@@ -21,27 +19,23 @@ func executeRoot(t *testing.T, args ...string) (stdout, stderr string, err error
 	return out.String(), errBuf.String(), err
 }
 
-func findCommand(cmds []*cobra.Command, name string) *cobra.Command {
-	for _, c := range cmds {
-		if c.Name() == name {
-			return c
-		}
-	}
-	return nil
-}
-
 func TestRootRegistersTheDocumentedCommandSurface(t *testing.T) {
 	root := NewRoot(Deps{})
 
-	for _, want := range []string{"version", "sync", "export"} {
-		if findCommand(root.Commands(), want) == nil {
-			t.Errorf("root is missing subcommand %q", want)
+	for _, path := range [][]string{{"version"}, {"sync"}, {"export"}, {"export", "duckdb"}} {
+		cmd, _, err := root.Find(path)
+		if err != nil {
+			t.Errorf("root.Find(%v): %v", path, err)
+			continue
+		}
+		if cmd.Name() != path[len(path)-1] {
+			t.Errorf("root.Find(%v) resolved to %q, want %q", path, cmd.Name(), path[len(path)-1])
 		}
 	}
 
-	syncCmd := findCommand(root.Commands(), "sync")
-	if syncCmd == nil {
-		t.Fatal("sync subcommand not found")
+	syncCmd, _, err := root.Find([]string{"sync"})
+	if err != nil {
+		t.Fatalf("root.Find([sync]): %v", err)
 	}
 	for _, flag := range []string{"vendor", "claude-path", "codex-path"} {
 		if syncCmd.Flags().Lookup(flag) == nil {
@@ -49,13 +43,9 @@ func TestRootRegistersTheDocumentedCommandSurface(t *testing.T) {
 		}
 	}
 
-	exportCmd := findCommand(root.Commands(), "export")
-	if exportCmd == nil {
-		t.Fatal("export subcommand not found")
-	}
-	duckdbCmd := findCommand(exportCmd.Commands(), "duckdb")
-	if duckdbCmd == nil {
-		t.Fatal("export duckdb subcommand not found")
+	duckdbCmd, _, err := root.Find([]string{"export", "duckdb"})
+	if err != nil {
+		t.Fatalf("root.Find([export duckdb]): %v", err)
 	}
 	if duckdbCmd.Flags().Lookup("out") == nil {
 		t.Error("export duckdb is missing flag --out")
@@ -69,5 +59,44 @@ func TestVersionSubcommandPrintsVersion(t *testing.T) {
 	}
 	if !strings.Contains(stdout, version.Version) {
 		t.Errorf("stdout %q does not contain version %q", stdout, version.Version)
+	}
+}
+
+func TestExecuteRootExportWithNoSinkErrors(t *testing.T) {
+	_, _, err := executeRoot(t, "export")
+	if err == nil {
+		t.Fatal("export: want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "duckdb") {
+		t.Errorf("export err = %q, want it to name duckdb", err.Error())
+	}
+}
+
+func TestExecuteRootExportWithUnknownSinkErrors(t *testing.T) {
+	_, _, err := executeRoot(t, "export", "bogus")
+	if err == nil {
+		t.Fatal("export bogus: want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "bogus") {
+		t.Errorf("export bogus err = %q, want it to name the bad sink", err.Error())
+	}
+}
+
+func TestExecuteRootSyncWithUnknownVendorErrors(t *testing.T) {
+	_, _, err := executeRoot(t, "sync", "--vendor", "bogus")
+	if err == nil {
+		t.Fatal("sync --vendor bogus: want error, got nil")
+	}
+	for _, want := range []string{"claude", "codex", "bogus"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("sync --vendor bogus err = %q, want it to mention %q", err.Error(), want)
+		}
+	}
+}
+
+func TestExecuteRootWithInvalidLogLevelErrors(t *testing.T) {
+	_, _, err := executeRoot(t, "--log-level", "bogus", "version")
+	if err == nil {
+		t.Fatal("--log-level bogus: want error, got nil")
 	}
 }
