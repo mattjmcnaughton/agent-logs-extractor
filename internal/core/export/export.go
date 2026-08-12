@@ -35,12 +35,17 @@ type Export struct {
 // New indexes the available sinks by name. Two exporters reporting the
 // same Name() is a wiring mistake, not a valid configuration: the later
 // one wins and is logged at warn, rather than silently dropping the
-// earlier one.
+// earlier one. A nil log is normalized to a discard logger here, at the
+// boundary, so e.log is always a total value: every later call site (Run,
+// and any #9 adds) can call it directly with no nil check of its own.
 func New(store ports.CanonicalStore, exporters []ports.Exporter, log *slog.Logger) *Export {
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
 	indexed := make(map[string]ports.Exporter, len(exporters))
 	for _, e := range exporters {
 		name := e.Name()
-		if _, dup := indexed[name]; dup && log != nil {
+		if _, dup := indexed[name]; dup {
 			log.Warn("export: duplicate sink name registered; the later one wins", "sink", name)
 		}
 		indexed[name] = e

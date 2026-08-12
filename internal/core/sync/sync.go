@@ -57,12 +57,17 @@ type Sync struct {
 // with no registered source is an error at Run time. Two sources reporting
 // the same vendor is a wiring mistake, not a valid configuration: the
 // later one wins and is logged at warn, rather than silently dropping the
-// earlier one.
+// earlier one. A nil log is normalized to a discard logger here, at the
+// boundary, so s.log is always a total value: every later call site (Run,
+// and any #8 adds) can call it directly with no nil check of its own.
 func New(sources []ports.ConversationSource, store ports.CanonicalStore, log *slog.Logger) *Sync {
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
 	indexed := make(map[model.Vendor]ports.ConversationSource, len(sources))
 	for _, s := range sources {
 		vendor := s.Vendor()
-		if _, dup := indexed[vendor]; dup && log != nil {
+		if _, dup := indexed[vendor]; dup {
 			log.Warn("sync: duplicate vendor source registered; the later one wins", "vendor", vendor)
 		}
 		indexed[vendor] = s
