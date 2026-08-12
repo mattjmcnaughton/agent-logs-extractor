@@ -16,10 +16,10 @@ import (
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/ports"
 )
 
-// errRebuildFinished is returned by FakeStoreRebuild once a rebuild has
+// ErrRebuildFinished is returned by FakeStoreRebuild once a rebuild has
 // been committed or discarded: a real store rejects writes to a swapped-out
 // generation, and the fake must too.
-var errRebuildFinished = errors.New("fakes: rebuild already finished")
+var ErrRebuildFinished = errors.New("fakes: rebuild already finished")
 
 // FakeConversationSource implements ports.ConversationSource.
 type FakeConversationSource struct {
@@ -138,11 +138,11 @@ type FakeStoreRebuild struct {
 
 // Put stores doc into the pending generation, keyed by session id, or
 // returns PutErrs[doc.Session.SessionID] if scripted. Once the rebuild has
-// finished (Commit or Discard), Put returns errRebuildFinished rather than
+// finished (Commit or Discard), Put returns ErrRebuildFinished rather than
 // silently writing into a generation nothing can observe.
 func (r *FakeStoreRebuild) Put(ctx context.Context, doc model.SessionDoc) error {
 	if r.done {
-		return errRebuildFinished
+		return ErrRebuildFinished
 	}
 	if err := r.store.PutErrs[doc.Session.SessionID]; err != nil {
 		return err
@@ -157,10 +157,10 @@ func (r *FakeStoreRebuild) Put(ctx context.Context, doc model.SessionDoc) error 
 // rebuild finished. A copy, not the pending map itself, is stored so a
 // later (rejected) Put on this rebuild can never alias into the live
 // store. Commit after Discard, or a second Commit, returns
-// errRebuildFinished and leaves the live store exactly as it was.
+// ErrRebuildFinished and leaves the live store exactly as it was.
 func (r *FakeStoreRebuild) Commit(ctx context.Context) error {
 	if r.done {
-		return errRebuildFinished
+		return ErrRebuildFinished
 	}
 	if err := r.store.CommitErr; err != nil {
 		return err
