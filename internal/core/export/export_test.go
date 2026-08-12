@@ -27,3 +27,16 @@ func TestExportRunIsNotImplementedAndAsksNoSinkForAnything(t *testing.T) {
 		t.Errorf("exporter recorded %d requests, want 0", len(exp.Requests))
 	}
 }
+
+func TestNewWithDuplicateSinkNameKeepsTheLaterExporterAndIsSafeWithANilLogger(t *testing.T) {
+	first := fakes.NewExporter("duckdb")
+	second := fakes.NewExporter("duckdb")
+
+	// log is nil on purpose: New must not panic when the diagnostic it
+	// logs on a duplicate key has no logger to write to.
+	e := New(fakes.NewCanonicalStore(), []ports.Exporter{first, second}, nil)
+
+	if got := e.exporters["duckdb"]; got != ports.Exporter(second) {
+		t.Errorf("exporters[duckdb] = %p, want the later-registered exporter %p (last one wins)", got, second)
+	}
+}

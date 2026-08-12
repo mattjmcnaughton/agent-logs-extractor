@@ -47,3 +47,16 @@ func TestSyncRunIsNotImplementedAndLeavesTheStoreIntact(t *testing.T) {
 		t.Errorf("store SessionIDs() = %v, want %v (unchanged)", got, wantIDs)
 	}
 }
+
+func TestNewWithDuplicateVendorKeepsTheLaterSourceAndIsSafeWithANilLogger(t *testing.T) {
+	first := fakes.NewConversationSource(model.VendorClaude)
+	second := fakes.NewConversationSource(model.VendorClaude)
+
+	// log is nil on purpose: New must not panic when the diagnostic it
+	// logs on a duplicate key has no logger to write to.
+	s := New([]ports.ConversationSource{first, second}, fakes.NewCanonicalStore(), nil)
+
+	if got := s.sources[model.VendorClaude]; got != ports.ConversationSource(second) {
+		t.Errorf("sources[claude] = %p, want the later-registered source %p (last one wins)", got, second)
+	}
+}
