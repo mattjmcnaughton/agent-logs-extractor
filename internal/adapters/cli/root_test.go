@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -98,5 +99,27 @@ func TestExecuteRootWithInvalidLogLevelErrors(t *testing.T) {
 	_, _, err := executeRoot(t, "--log-level", "bogus", "version")
 	if err == nil {
 		t.Fatal("--log-level bogus: want error, got nil")
+	}
+}
+
+// TestLogLevelFlagReachesTheInjectedLevelVar covers the success path
+// applyLogLevel's error path alone can't: that a valid --log-level
+// actually calls level.Set and lands on the one LevelVar wiring injects
+// into every use case's logger. This is the exact bug cycle 1 fixed
+// (--log-level not reaching the injected logger) — without this test that
+// regression could come back silently.
+func TestLogLevelFlagReachesTheInjectedLevelVar(t *testing.T) {
+	lv := new(slog.LevelVar)
+	lv.Set(slog.LevelInfo)
+
+	root := NewRoot(Deps{Level: lv})
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"--log-level", "debug", "version"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if lv.Level() != slog.LevelDebug {
+		t.Errorf("level = %v, want %v", lv.Level(), slog.LevelDebug)
 	}
 }

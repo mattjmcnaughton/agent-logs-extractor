@@ -19,12 +19,23 @@ import (
 
 func main() {
 	// One logger, one level, one owner: level starts from
-	// AGENT_LOGS_EXTRACTOR_LOG_LEVEL (else info), and cli's
-	// PersistentPreRunE mutates the same LevelVar from --log-level when
-	// that flag is passed, so the flag and the env var both drive the one
-	// handler every use case logs through.
+	// AGENT_LOGS_EXTRACTOR_LOG_LEVEL (else info, slog.LevelVar's own zero
+	// value), and cli's PersistentPreRunE mutates the same LevelVar from
+	// --log-level when that flag is passed, so the flag and the env var
+	// both drive the one handler every use case logs through. Both parse
+	// through cli.ParseLevel, the one level parser shared by wiring and
+	// the CLI, but with different error policies: an invalid env var is
+	// not fatal (this is process startup, before any flag has even been
+	// parsed) — it's warned about here and falls back to info — while an
+	// invalid --log-level is a hard error, handled in applyLogLevel.
 	level := new(slog.LevelVar)
-	level.Set(resolveLevel(os.Getenv("AGENT_LOGS_EXTRACTOR_LOG_LEVEL")))
+	if s := os.Getenv("AGENT_LOGS_EXTRACTOR_LOG_LEVEL"); s != "" {
+		if l, err := cli.ParseLevel(s); err != nil {
+			fmt.Fprintf(os.Stderr, "agent-logs-extractor: warning: invalid AGENT_LOGS_EXTRACTOR_LOG_LEVEL %q: %v; using info\n", s, err)
+		} else {
+			level.Set(l)
+		}
+	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
 	paths := defaultPaths()
@@ -51,16 +62,6 @@ func main() {
 		fmt.Fprintln(os.Stderr, "agent-logs-extractor:", err)
 		os.Exit(1)
 	}
-}
-
-// resolveLevel parses s as a slog.Level, falling back to info when s is
-// empty or invalid.
-func resolveLevel(s string) slog.Level {
-	var l slog.Level
-	if err := l.UnmarshalText([]byte(s)); err != nil {
-		return slog.LevelInfo
-	}
-	return l
 }
 
 // resolvedPaths are the tool's default on-disk locations, resolved from the

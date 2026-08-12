@@ -66,6 +66,21 @@ func NewRoot(deps Deps) *cobra.Command {
 	return root
 }
 
+// ParseLevel parses s as a slog.Level ("debug", "info", "warn", "error",
+// case-insensitive, matching slog.Level.UnmarshalText). It is the single
+// level parser shared by both entry points that accept a level from the
+// outside world — wiring's AGENT_LOGS_EXTRACTOR_LOG_LEVEL env var and the
+// --log-level flag below — so the two can never drift into different
+// parsing rules. The two entry points differ only in what an invalid s
+// means to them: wiring treats a bad env var as non-fatal (warn and fall
+// back to info), while applyLogLevel treats a bad flag as a hard error,
+// which is correct for a value the user typed on this exact invocation.
+func ParseLevel(s string) (slog.Level, error) {
+	var l slog.Level
+	err := l.UnmarshalText([]byte(s))
+	return l, err
+}
+
 // applyLogLevel parses s and sets it on level, when s is non-empty. An
 // empty s (the flag was not passed) leaves level exactly as wiring seeded
 // it from AGENT_LOGS_EXTRACTOR_LOG_LEVEL. A nil level (as in tests that
@@ -75,8 +90,8 @@ func applyLogLevel(level *slog.LevelVar, s string) error {
 	if s == "" {
 		return nil
 	}
-	var l slog.Level
-	if err := l.UnmarshalText([]byte(s)); err != nil {
+	l, err := ParseLevel(s)
+	if err != nil {
 		return fmt.Errorf("invalid --log-level %q: %w", s, err)
 	}
 	if level != nil {
