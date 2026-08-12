@@ -122,6 +122,10 @@ Set `AGENT_LOGS_EXTRACTOR_HOME` to redirect every path (store, exports, and the 
 AGENT_LOGS_EXTRACTOR_HOME=/tmp/sandbox agent-logs-extractor sync
 ```
 
+## Logging
+
+Log level is controlled by the `--log-level` persistent flag (debug, info, warn, error) or the `AGENT_LOGS_EXTRACTOR_LOG_LEVEL` environment variable, in that order of precedence, defaulting to `info` if neither is set. An invalid `--log-level` value is a hard error; an invalid env var value prints a warning and falls back to `info`.
+
 ## Scope
 
 `agent-logs-extractor` deliberately does **not**:
