@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/model"
@@ -150,7 +151,101 @@ func TestFakeExporterRecordsEachRequest(t *testing.T) {
 	if len(exp.Requests) != 2 {
 		t.Fatalf("len(Requests) = %d, want 2", len(exp.Requests))
 	}
-	if got := exp.LastRequest(); !reflect.DeepEqual(got, second) {
-		t.Errorf("LastRequest() = %+v, want %+v", got, second)
+	if got := exp.Requests[len(exp.Requests)-1]; !reflect.DeepEqual(got, second) {
+		t.Errorf("Requests[len-1] = %+v, want %+v", got, second)
+	}
+}
+
+func TestFakeStoreRebuildDiscardThenCommitErrorsAndLeavesTheLiveStoreIntact(t *testing.T) {
+	ctx := context.Background()
+	store := NewCanonicalStore()
+
+	// Seed a committed generation.
+	r0, err := store.BeginRebuild(ctx)
+	if err != nil {
+		t.Fatalf("BeginRebuild: %v", err)
+	}
+	if err := r0.Put(ctx, model.SessionDoc{Session: model.Session{SessionID: "claude:live"}}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := r0.Commit(ctx); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	want := []string{"claude:live"}
+
+	r1, err := store.BeginRebuild(ctx)
+	if err != nil {
+		t.Fatalf("BeginRebuild: %v", err)
+	}
+	if err := r1.Put(ctx, model.SessionDoc{Session: model.Session{SessionID: "claude:pending"}}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := r1.Discard(); err != nil {
+		t.Fatalf("Discard: %v", err)
+	}
+
+	// Commit after Discard must error, not resurrect the discarded
+	// pending generation over the live store.
+	if err := r1.Commit(ctx); err == nil {
+		t.Error("Commit after Discard: want error, got nil")
+	}
+	// Put after Discard must also error, not silently rebuild into a
+	// generation nothing can observe.
+	if err := r1.Put(ctx, model.SessionDoc{Session: model.Session{SessionID: "claude:sneaked-in"}}); err == nil {
+		t.Error("Put after Discard: want error, got nil")
+	}
+	if got := store.SessionIDs(); !reflect.DeepEqual(got, want) {
+		t.Errorf("SessionIDs() = %v, want %v (live store untouched)", got, want)
+	}
+}
+
+func TestFakeStoreRebuildPutAfterCommitDoesNotAliasIntoTheLiveStore(t *testing.T) {
+	ctx := context.Background()
+	store := NewCanonicalStore()
+
+	r, err := store.BeginRebuild(ctx)
+	if err != nil {
+		t.Fatalf("BeginRebuild: %v", err)
+	}
+	if err := r.Put(ctx, model.SessionDoc{Session: model.Session{SessionID: "claude:a"}}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := r.Commit(ctx); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	want := []string{"claude:a"}
+
+	// A Put on the finished rebuild must be rejected outright, so it
+	// cannot sneak into the live store even if a future change reused the
+	// same underlying map.
+	if err := r.Put(ctx, model.SessionDoc{Session: model.Session{SessionID: "claude:sneaked-in"}}); err == nil {
+		t.Error("Put after Commit: want error, got nil")
+	}
+	if got := store.SessionIDs(); !reflect.DeepEqual(got, want) {
+		t.Errorf("SessionIDs() = %v, want %v (live store untouched)", got, want)
+	}
+}
+
+func TestFakeConversationSourceParsedRecordsTheSetOfPathsReadNotTheirOrder(t *testing.T) {
+	ctx := context.Background()
+	src := NewConversationSource(model.VendorClaude)
+	src.Seed("/root", "/root/a.jsonl", model.SessionDoc{}, model.ParseStats{})
+	src.Seed("/root", "/root/b.jsonl", model.SessionDoc{}, model.ParseStats{})
+
+	// Parse out of sorted order deliberately: Parsed records an outcome
+	// (which paths were read), not a call sequence, so the assertion
+	// below sorts before comparing rather than checking order.
+	if _, _, err := src.Parse(ctx, "/root/b.jsonl"); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if _, _, err := src.Parse(ctx, "/root/a.jsonl"); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	got := slices.Clone(src.Parsed)
+	slices.Sort(got)
+	want := []string{"/root/a.jsonl", "/root/b.jsonl"}
+	if !slices.Equal(got, want) {
+		t.Errorf("Parsed (sorted) = %v, want %v", got, want)
 	}
 }
