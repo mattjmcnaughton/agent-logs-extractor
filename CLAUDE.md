@@ -26,24 +26,24 @@ vet, go test).
 
 ```
 cmd/agent-logs-extractor/
-  main.go               # Wiring: env → adapters → use cases → cobra root
+  main.go          # Wiring: env → adapters → use cases → cobra root
 internal/
   core/
-    model/               # Unified data model (SessionDoc/Session/Message/ToolCall)
-    sync/                 # Sync use case
-    export/                # Export use case
-  ports/                 # Interfaces the core depends on
+    model/         # Unified data model (SessionDoc/Session/Message/ToolCall)
+    sync/          # Sync use case
+    export/        # Export use case
+  ports/           # Interfaces the core depends on
   adapters/
-    cli/                  # Cobra subcommands, one file each (thin shims)
+    cli/           # Cobra subcommands, one file each (thin shims)
   testing/
-    fakes/                # In-memory fakes for every port
-    logfixture/            # Verbatim vendor log fixtures (never hand-edit)
+    fakes/         # In-memory fakes for every port
+    logfixture/    # Verbatim vendor log fixtures (never hand-edit)
   version/
-    version.go            # Version string (injectable via ldflags)
+    version.go     # Version string (injectable via ldflags)
 docs/
-  adrs/                  # Architecture Decision Records
-  architecture.md        # System architecture overview
-  development.md         # Dev setup and common tasks
+  adrs/            # Architecture Decision Records
+  architecture.md  # System architecture overview
+  development.md   # Dev setup and common tasks
 ```
 
 ## Key Conventions
