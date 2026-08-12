@@ -18,10 +18,14 @@ All fixtures were generated in a sandboxed container (2026-08-12) and contain no
 personal data or secrets. They are committed **verbatim** — do not hand-edit;
 regenerate instead.
 
-- **`claude/`** — Claude Code v2.1.228, generated with a headless run:
-  `claude -p "Use the Bash tool to run: echo hello fixture. Then reply with exactly: done" --allowedTools Bash --max-turns 4`.
+- **`claude/`** — Claude Code v2.1.228, generated with a headless run **under a
+  clean `HOME`** so no account-specific skills, plugins, or MCP connectors leak
+  into the log (the `skill_listing` / `deferred_tools_delta` attachments contain
+  only harness defaults):
+  `HOME=<clean-dir> claude -p "Use the Bash tool to run: echo hello fixture. Then reply with exactly: done" --allowedTools Bash --max-turns 4`.
   Contains a complete `tool_use` → `tool_result` pair plus the bookkeeping record
   types (`queue-operation`, `attachment`, `ai-title`, `last-prompt`).
+  Regenerate the same way — always with a clean `HOME`.
 - **`codex/`** — Codex CLI v0.147.0, generated with
   `codex exec --skip-git-repo-check "say hello"` **without OpenAI credentials**:
   the API call fails, but the rollout is real and contains `session_meta`,
