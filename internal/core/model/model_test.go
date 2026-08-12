@@ -2,9 +2,7 @@ package model
 
 import (
 	"encoding/json"
-	"maps"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -59,25 +57,48 @@ func fullSessionDoc() SessionDoc {
 func TestSessionDocJSONRoundTrip(t *testing.T) {
 	doc := fullSessionDoc()
 
-	// Assert the exact key set per relation, not a substring search over
-	// the whole marshaled document: a substring check over the full doc
-	// can't tell a tag on the wrong struct from a tag on the right one,
-	// and reflect.DeepEqual on the round trip can't catch a tag rename at
-	// all (encoding/json falls back to case-insensitive field-name
-	// matching on decode). Exact key sets catch removals, renames, and
-	// accidental additions alike.
-	assertExactKeys(t, doc.Session, []string{
-		"session_id", "vendor", "project_path", "project_name",
-		"started_at", "ended_at", "git_branch", "vendor_version",
-		"source_path",
+	// Assert the exact key-to-value map per relation, not just the key
+	// set and not a substring search over the whole marshaled document.
+	// A substring check over the full doc can't tell a tag on the wrong
+	// struct from a tag on the right one; an exact key *set* catches
+	// removals, renames, and additions but can't detect a tag *swap*
+	// between two same-type fields (e.g. project_path/project_name); and
+	// reflect.DeepEqual on the round trip can't catch that either — a
+	// swap is an involution, so it round-trips as identity. Comparing
+	// key->value (fullSessionDoc gives each field a distinct sentinel)
+	// catches all four failure modes with one assertion.
+	assertJSONObject(t, doc.Session, map[string]string{
+		"session_id":     `"claude:abc-123"`,
+		"vendor":         `"claude"`,
+		"project_path":   `"/home/u/proj"`,
+		"project_name":   `"proj"`,
+		"started_at":     `"2026-08-01T12:00:00Z"`,
+		"ended_at":       `"2026-08-01T13:00:00Z"`,
+		"git_branch":     `"main"`,
+		"vendor_version": `"1.2.3"`,
+		"source_path":    `"/home/u/.claude/projects/proj/session.jsonl"`,
 	})
-	assertExactKeys(t, doc.Messages[0], []string{
-		"message_id", "session_id", "seq", "parent_message_id",
-		"role", "created_at", "text", "model", "raw",
+	assertJSONObject(t, doc.Messages[0], map[string]string{
+		"message_id":        `"claude:msg-1"`,
+		"session_id":        `"claude:abc-123"`,
+		"seq":               `0`,
+		"parent_message_id": `"claude:msg-0"`,
+		"role":              `"user"`,
+		"created_at":        `"2026-08-01T12:00:00Z"`,
+		"text":              `"hello"`,
+		"model":             `"claude-opus"`,
+		"raw":               `{"type":"user"}`,
 	})
-	assertExactKeys(t, doc.ToolCalls[0], []string{
-		"tool_call_id", "session_id", "message_id", "seq", "tool_name",
-		"arguments", "output", "status", "created_at",
+	assertJSONObject(t, doc.ToolCalls[0], map[string]string{
+		"tool_call_id": `"claude:tool-1"`,
+		"session_id":   `"claude:abc-123"`,
+		"message_id":   `"claude:msg-1"`,
+		"seq":          `1`,
+		"tool_name":    `"Read"`,
+		"arguments":    `{"path":"/tmp/x"}`,
+		"output":       `"file contents"`,
+		"status":       `"ok"`,
+		"created_at":   `"2026-08-01T12:00:00Z"`,
 	})
 
 	b, err := json.Marshal(doc)
@@ -93,9 +114,11 @@ func TestSessionDocJSONRoundTrip(t *testing.T) {
 	}
 }
 
-// assertExactKeys marshals v and fails the test unless its top-level JSON
-// object keys are exactly want.
-func assertExactKeys(t *testing.T, v any, want []string) {
+// assertJSONObject marshals v and fails the test unless its top-level JSON
+// object is exactly want: same keys, same values. Comparing values (not
+// just keys) is what catches a tag swapped between two same-type fields,
+// which an exact-key-set check cannot.
+func assertJSONObject(t *testing.T, v any, want map[string]string) {
 	t.Helper()
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -105,10 +128,12 @@ func assertExactKeys(t *testing.T, v any, want []string) {
 	if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	got := slices.Sorted(maps.Keys(m))
-	wantSorted := slices.Sorted(slices.Values(want))
-	if !slices.Equal(got, wantSorted) {
-		t.Errorf("keys = %v, want %v", got, wantSorted)
+	got := make(map[string]string, len(m))
+	for k, v := range m {
+		got[k] = string(v)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("fields = %v, want %v", got, want)
 	}
 }
 
