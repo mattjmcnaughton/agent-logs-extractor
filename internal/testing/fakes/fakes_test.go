@@ -224,6 +224,22 @@ func TestFakeStoreRebuildPutAfterCommitDoesNotAliasIntoTheLiveStore(t *testing.T
 	if got := store.SessionIDs(); !reflect.DeepEqual(got, want) {
 		t.Errorf("SessionIDs() = %v, want %v (live store untouched)", got, want)
 	}
+
+	// The aliasing claim itself, not just the done guard the assertions
+	// above already exercise: mutate the rebuild's pending map directly
+	// (same package, so it is reachable even though Put is rejected once
+	// done) and confirm the live store does not see it. Deleting
+	// maps.Clone from Commit — swapping in the pending map itself instead
+	// of a copy — would make this assertion fail while every assertion
+	// above it still passes.
+	fr, ok := r.(*FakeStoreRebuild)
+	if !ok {
+		t.Fatalf("r is %T, want *FakeStoreRebuild", r)
+	}
+	fr.pending["claude:mutated-directly"] = model.SessionDoc{Session: model.Session{SessionID: "claude:mutated-directly"}}
+	if got := store.SessionIDs(); !reflect.DeepEqual(got, want) {
+		t.Errorf("SessionIDs() after mutating pending directly = %v, want %v (Commit must not alias into the live store)", got, want)
+	}
 }
 
 func TestFakeConversationSourceParsedRecordsTheSetOfPathsReadNotTheirOrder(t *testing.T) {
