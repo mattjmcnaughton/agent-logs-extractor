@@ -10,7 +10,6 @@ import (
 	"context"
 	"maps"
 	"slices"
-	"strings"
 
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/model"
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/ports"
@@ -122,8 +121,14 @@ func (s *FakeCanonicalStore) Root() string {
 }
 
 // BeginRebuild returns BeginErr if scripted, else a fresh
-// *FakeStoreRebuild bound to this store.
+// *FakeStoreRebuild bound to this store. It also checks ctx.Err() first,
+// mirroring jsonlstore.Store.BeginRebuild, so a #8 core unit test written
+// against a cancelled context behaves the same against this fake as it
+// would against the real store.
 func (s *FakeCanonicalStore) BeginRebuild(ctx context.Context) (ports.StoreRebuild, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if s.BeginErr != nil {
 		return nil, s.BeginErr
 	}
@@ -154,41 +159,35 @@ type FakeStoreRebuild struct {
 }
 
 // Put stores doc into the pending generation, keyed by session id, or
-// returns PutErrs[doc.Session.SessionID] if scripted. It also rejects a doc
-// whose session id is empty or not namespaced as "<vendor>:<rest>" with
-// ErrInvalidSessionDoc, matching jsonlstore's real contract, so #8's core
-// unit tests (which run against this fake) can catch a sync loop that
-// forgets to skip such docs before calling Put. Once the rebuild has
-// finished (Commit or Discard), Put returns ErrRebuildFinished rather than
-// silently writing into a generation nothing can observe. Any Put failure
-// is remembered as firstErr, which poisons every later Commit on this
-// rebuild; later Puts are otherwise unaffected.
+// returns PutErrs[doc.Session.SessionID] if scripted. It also checks
+// ctx.Err() and rejects a doc that ports.ValidSessionDoc reports invalid
+// (empty/non-namespaced/bare-prefix session id, or a traversal vendor) with
+// ErrInvalidSessionDoc — the same predicate jsonlstore.relPath calls, so the
+// two implementations cannot drift apart — matching jsonlstore's real
+// contract so #8's core unit tests (which run against this fake) can catch
+// a sync loop that forgets to skip such docs before calling Put. Once the
+// rebuild has finished (Commit or Discard), Put returns ErrRebuildFinished
+// rather than silently writing into a generation nothing can observe. Any
+// Put failure is remembered as firstErr, which poisons every later Commit
+// on this rebuild; later Puts are otherwise unaffected.
 func (r *FakeStoreRebuild) Put(ctx context.Context, doc model.SessionDoc) error {
 	if r.done {
 		return ErrRebuildFinished
+	}
+	if err := ctx.Err(); err != nil {
+		r.recordErr(err)
+		return err
 	}
 	if err := r.store.PutErrs[doc.Session.SessionID]; err != nil {
 		r.recordErr(err)
 		return err
 	}
-	if !hasNamespacedSessionID(doc.Session) {
+	if !ports.ValidSessionDoc(doc.Session) {
 		r.recordErr(ErrInvalidSessionDoc)
 		return ErrInvalidSessionDoc
 	}
 	r.pending[doc.Session.SessionID] = doc
 	return nil
-}
-
-// hasNamespacedSessionID reports whether sess has a non-empty vendor and a
-// session id of the form "<vendor>:<rest>" with a non-empty rest — the same
-// shape jsonlstore.relPath requires.
-func hasNamespacedSessionID(sess model.Session) bool {
-	vendor := string(sess.Vendor)
-	if vendor == "" || sess.SessionID == "" {
-		return false
-	}
-	prefix := vendor + ":"
-	return strings.HasPrefix(sess.SessionID, prefix) && sess.SessionID != prefix
 }
 
 // recordErr remembers err as firstErr if nothing has failed on this
@@ -199,20 +198,24 @@ func (r *FakeStoreRebuild) recordErr(err error) {
 	}
 }
 
-// Commit returns firstErr if an earlier Put on this rebuild failed, or
-// CommitErr if scripted, leaving the live store untouched either way;
-// otherwise it replaces the live store wholesale with a copy of the
-// pending generation — a full rebuild, not a merge — and marks the
-// rebuild finished. A copy, not the pending map itself, is stored so a
-// later (rejected) Put on this rebuild can never alias into the live
-// store. Commit after Discard, or a second Commit, returns
-// ErrRebuildFinished and leaves the live store exactly as it was.
+// Commit returns firstErr if an earlier Put on this rebuild failed,
+// ctx.Err() if the context is cancelled, or CommitErr if scripted, leaving
+// the live store untouched in every case; otherwise it replaces the live
+// store wholesale with a copy of the pending generation — a full rebuild,
+// not a merge — and marks the rebuild finished. A copy, not the pending map
+// itself, is stored so a later (rejected) Put on this rebuild can never
+// alias into the live store. Commit after Discard, or a second Commit,
+// returns ErrRebuildFinished and leaves the live store exactly as it was.
 func (r *FakeStoreRebuild) Commit(ctx context.Context) error {
 	if r.done {
 		return ErrRebuildFinished
 	}
 	if r.firstErr != nil {
 		return r.firstErr
+	}
+	if err := ctx.Err(); err != nil {
+		r.recordErr(err)
+		return err
 	}
 	if err := r.store.CommitErr; err != nil {
 		r.recordErr(err)
