@@ -75,7 +75,12 @@ func (s *Source) List(ctx context.Context, root string) ([]string, error) {
 		projDir := filepath.Join(projectsDir, entry.Name())
 		projEntries, err := os.ReadDir(projDir)
 		if err != nil {
-			return nil, err
+			// One unreadable project directory (e.g. permissions) should not
+			// make every other vendor session unlistable — a missing root is
+			// already tolerated (US-7) for the same reason. Warn and move on
+			// rather than aborting the whole enumeration.
+			s.log.Warn("claudesource: reading project directory failed; skipping it", "path", projDir, "error", err)
+			continue
 		}
 		for _, e := range projEntries {
 			if !e.IsDir() && filepath.Ext(e.Name()) == ".jsonl" {
@@ -103,7 +108,13 @@ func (s *Source) Parse(ctx context.Context, path string) (model.SessionDoc, mode
 		return model.SessionDoc{}, model.ParseStats{}, err
 	}
 
-	allRecs := parentRecs
+	// Cloned, not aliased: the merge sort below permutes allRecs in place
+	// when parentRecs' backing array has spare capacity (the common case,
+	// since readRecords' incremental appends usually leave headroom), and
+	// sessionMeta below is handed parentRecs on the assumption that it is
+	// still "the parent transcript in file order" — a permuted parentRecs
+	// would silently let a subagent's metadata win (regression: B1).
+	allRecs := slices.Clone(parentRecs)
 
 	subPaths, err := subagentPaths(path)
 	if err != nil {
