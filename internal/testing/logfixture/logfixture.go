@@ -24,11 +24,6 @@ func ClaudeProjectsDir() string {
 	return filepath.Join(Dir(), "claude", "projects")
 }
 
-// CodexRoot returns Dir()/codex, mirroring ~/.codex.
-func CodexRoot() string {
-	return filepath.Join(Dir(), "codex")
-}
-
 // PathologicalRoot returns Dir()/pathological.
 func PathologicalRoot() string {
 	return filepath.Join(Dir(), "pathological")
@@ -37,8 +32,6 @@ func PathologicalRoot() string {
 // Fixture project directory names under ClaudeProjectsDir(). Named
 // constants so tests never hardcode the encoded-cwd directory name.
 const (
-	// ClaudeBasicProject is a single-turn session: one Bash tool_use/tool_result pair.
-	ClaudeBasicProject = "-tmp-claude-0--home-user-94ba8eae-3476-51cf-a4d4-b0b5339db735-scratchpad-fixture-project"
 	// ClaudeSidechainProject spawns a subagent: parent session + a nested
 	// <session-uuid>/subagents/agent-<agentId>.jsonl sidechain transcript.
 	ClaudeSidechainProject = "-home-user-fixture-sidechain"

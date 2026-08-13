@@ -49,8 +49,17 @@ func eachJSONLLine(t *testing.T, root string, fn func(path string, lineNum int, 
 	}
 }
 
-func TestClaudeFixturesAreValidJSONL(t *testing.T) {
-	eachJSONLLine(t, logfixture.ClaudeProjectsDir(), func(path string, lineNum int, line []byte) {
+func TestFixturesAreValidJSONL(t *testing.T) {
+	// claude/ and codex/ alike -- every non-pathological fixture line must
+	// be well-formed. pathological/ is intentionally excluded: its whole
+	// purpose is malformed input (truncated lines, unknown types).
+	eachJSONLLine(t, filepath.Join(logfixture.Dir(), "claude"), func(path string, lineNum int, line []byte) {
+		var v map[string]json.RawMessage
+		if err := json.Unmarshal(line, &v); err != nil {
+			t.Errorf("%s:%d: not a JSON object: %v", path, lineNum, err)
+		}
+	})
+	eachJSONLLine(t, filepath.Join(logfixture.Dir(), "codex"), func(path string, lineNum int, line []byte) {
 		var v map[string]json.RawMessage
 		if err := json.Unmarshal(line, &v); err != nil {
 			t.Errorf("%s:%d: not a JSON object: %v", path, lineNum, err)
@@ -59,9 +68,10 @@ func TestClaudeFixturesAreValidJSONL(t *testing.T) {
 }
 
 type toolUseBlock struct {
-	Type string `json:"type"`
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	Type   string          `json:"type"`
+	ID     string          `json:"id"`
+	Name   string          `json:"name"`
+	Caller json.RawMessage `json:"caller"`
 }
 
 type toolResultBlock struct {
@@ -118,6 +128,31 @@ func toolResultBlocksOf(content json.RawMessage) []toolResultBlock {
 		}
 	}
 	return out
+}
+
+// TestToolUseCallerIsAlwaysDirect pins the fixture-backed evidence behind
+// the TDD's open-question-1 settlement (docs/technical/tdd-mvp.md): every
+// observed tool_use.caller is {"type":"direct"}, in the parent files and
+// inside the sidechain alike, so it carries no signal for the
+// flatten-vs-split decision. If a future vendor version makes caller
+// meaningful, this test -- not just prose -- should notice.
+func TestToolUseCallerIsAlwaysDirect(t *testing.T) {
+	found := 0
+	eachJSONLLine(t, filepath.Join(logfixture.Dir(), "claude"), func(path string, lineNum int, line []byte) {
+		r := decodeRecord(t, path, lineNum, line)
+		if r.Message == nil {
+			return
+		}
+		for _, tu := range toolUseBlocksOf(r.Message.Content) {
+			found++
+			if string(tu.Caller) != `{"type":"direct"}` {
+				t.Errorf("%s:%d: tool_use %q has caller %s, want {\"type\":\"direct\"}", path, lineNum, tu.ID, tu.Caller)
+			}
+		}
+	})
+	if found == 0 {
+		t.Fatal("expected at least one tool_use block across the Claude fixture tree")
+	}
 }
 
 func TestSidechainFixtureExercisesSubagents(t *testing.T) {
@@ -201,6 +236,7 @@ func TestSidechainFixtureExercisesSubagents(t *testing.T) {
 		}
 
 		sawRecord := false
+		sawSuccessfulToolResult := false
 		eachJSONLLine(t, filepath.Dir(sub), func(path string, lineNum int, line []byte) {
 			if path != sub {
 				return
@@ -216,9 +252,42 @@ func TestSidechainFixtureExercisesSubagents(t *testing.T) {
 			if r.SessionID != parentSessionID {
 				t.Errorf("%s:%d: sessionId %q does not match parent sessionId %q", path, lineNum, r.SessionID, parentSessionID)
 			}
+			if r.Message == nil {
+				return
+			}
+			for _, tr := range toolResultBlocksOf(r.Message.Content) {
+				if tr.IsError {
+					continue
+				}
+				sawSuccessfulToolResult = true
+				// The third toolUseResult shape (see docs/technical/tdd-mvp.md):
+				// absent entirely on a successful call recorded inside a
+				// sidechain transcript, not just object-vs-string.
+				if r.ToolUseResult != nil {
+					t.Errorf("%s:%d: expected toolUseResult to be absent for a successful sidechain tool_result, got %s", path, lineNum, r.ToolUseResult)
+				}
+			}
 		})
 		if !sawRecord {
 			t.Errorf("subagent file %s has no records", sub)
+		}
+		if !sawSuccessfulToolResult {
+			t.Errorf("subagent file %s: expected at least one successful (non-error) tool_result", sub)
+		}
+
+		// The .meta.json sidecar, if present, carries toolUseId as a direct
+		// pointer back to the parent's Agent tool_use id -- the primary
+		// join, with toolUseResult.agentId as the fallback exercised above.
+		metaPath := strings.TrimSuffix(sub, ".jsonl") + ".meta.json"
+		if b, err := os.ReadFile(metaPath); err == nil {
+			var meta struct {
+				ToolUseID string `json:"toolUseId"`
+			}
+			if err := json.Unmarshal(b, &meta); err != nil {
+				t.Errorf("%s: not valid JSON: %v", metaPath, err)
+			} else if meta.ToolUseID != agentToolUseID {
+				t.Errorf("%s: toolUseId %q does not match parent Agent tool_use id %q", metaPath, meta.ToolUseID, agentToolUseID)
+			}
 		}
 	}
 }
@@ -268,28 +337,54 @@ func TestToolErrorFixtureExercisesFailedCall(t *testing.T) {
 	}
 }
 
-func TestFixturesAreScrubbed(t *testing.T) {
-	// Claude fixtures (this ticket's scope, including the new sidechain
-	// and tool-error sessions) and the pathological Claude fixtures
-	// derived from them: every committed line must be clean.
-	//
-	// The Codex fixture (internal/testing/logfixture/codex/) and its
-	// pathological derivative predate this ticket and embed Codex's own
-	// bundled system-skill file listing, which cites literal
-	// "/root/.codex/skills/..." paths as part of its real, expected
-	// content — not personal data. Ticket #5 does not touch codex/
-	// fixtures (the Codex gap is tracked by a deferred ticket), so they
-	// are intentionally excluded here rather than reported as failures
-	// for content this ticket is not allowed to regenerate.
-	roots := []string{
-		logfixture.ClaudeProjectsDir(),
-		filepath.Join(logfixture.PathologicalRoot(), "claude"),
-	}
-	for _, root := range roots {
-		eachJSONLLine(t, root, func(path string, lineNum int, line []byte) {
-			if findings := scrub.Findings(line); findings != nil {
-				t.Errorf("%s:%d: sensitive content still present: %v", path, lineNum, findings)
+// eachFixtureDataFile walks the committed fixture data directories (claude/,
+// codex/, pathological/ -- never the package's own .go/.md files) and calls
+// fn with the path and full bytes of every non-.jsonl file found. Today
+// that means subagent .meta.json sidecars, which scrub.Tree copies through
+// verbatim rather than rewriting line-by-line.
+func eachFixtureDataFile(t *testing.T, fn func(path string, data []byte)) {
+	t.Helper()
+
+	for _, dir := range []string{"claude", "codex", "pathological"} {
+		root := filepath.Join(logfixture.Dir(), dir)
+		err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
 			}
+			if d.IsDir() || strings.HasSuffix(p, ".jsonl") {
+				return nil
+			}
+			b, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			fn(p, b)
+			return nil
 		})
+		if err != nil {
+			t.Fatalf("walking %s: %v", root, err)
+		}
 	}
+}
+
+func TestFixturesAreScrubbed(t *testing.T) {
+	// Single root: covers claude/, codex/, and pathological/ alike. There
+	// is no vendor-specific exclusion -- every committed *.jsonl line must
+	// be clean, full stop. (Codex's real /root/.codex/skills/... paths are
+	// not a finding: /root is the generic root home and scrub.Findings
+	// does not flag it -- see TestLineRewritesForeignHomeDirs and
+	// TestFindingsCleanAndDirty in scrub_test.go.)
+	eachJSONLLine(t, logfixture.Dir(), func(path string, lineNum int, line []byte) {
+		if findings := scrub.Findings(line); findings != nil {
+			t.Errorf("%s:%d: sensitive content still present: %v", path, lineNum, findings)
+		}
+	})
+
+	// Non-.jsonl fixture files (e.g. subagent .meta.json sidecars) are not
+	// line-oriented, so scan each one whole rather than line-by-line.
+	eachFixtureDataFile(t, func(path string, data []byte) {
+		if findings := scrub.Findings(data); findings != nil {
+			t.Errorf("%s: sensitive content still present: %v", path, findings)
+		}
+	})
 }

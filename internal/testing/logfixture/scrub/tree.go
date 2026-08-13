@@ -3,7 +3,6 @@ package scrub
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -68,39 +67,18 @@ func renamePath(rel string, maps []Rule) string {
 	return rel
 }
 
-func joinPath(dst, rel string) string {
-	return filepath.Join(dst, rel)
-}
-
-func dirOf(p string) string {
-	return filepath.Dir(p)
-}
-
-func ensureDir(dir string) error {
-	return os.MkdirAll(dir, 0o755)
-}
-
 func copyFile(src, dst string) error {
-	in, err := os.Open(src)
+	b, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
-	defer in.Close()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-	return out.Close()
+	return os.WriteFile(dst, b, 0o644)
 }
 
 // scrubFile scrubs every line of srcPath and writes the result to dstPath,
-// preserving line count, order, and a missing trailing newline.
+// preserving line count, order, and a missing trailing newline. A blank
+// line (which is not valid JSON on its own, so Line would reject it) is
+// passed through verbatim rather than aborting the whole file.
 func scrubFile(srcPath, dstPath string, o Options) error {
 	in, err := os.Open(srcPath)
 	if err != nil {
@@ -129,9 +107,12 @@ func scrubFile(srcPath, dstPath string, o Options) error {
 			content = content[:len(content)-1]
 		}
 
-		scrubbed, err := Line([]byte(content), o)
-		if err != nil {
-			return fmt.Errorf("line %d: %w", lineNum, err)
+		scrubbed := []byte(content)
+		if content != "" {
+			scrubbed, err = Line([]byte(content), o)
+			if err != nil {
+				return fmt.Errorf("line %d: %w", lineNum, err)
+			}
 		}
 		if _, err := out.Write(scrubbed); err != nil {
 			return err
