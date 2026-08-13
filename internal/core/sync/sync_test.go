@@ -18,14 +18,14 @@ func TestSyncRunIsNotImplementedAndLeavesTheStoreIntact(t *testing.T) {
 	ctx := context.Background()
 
 	src := fakes.NewConversationSource(model.VendorClaude)
-	src.Seed("/root", "/root/session.jsonl", model.SessionDoc{Session: model.Session{SessionID: "claude:one"}}, model.ParseStats{})
+	src.Seed("/root", "/root/session.jsonl", model.SessionDoc{Session: model.Session{Vendor: model.VendorClaude, SessionID: "claude:one"}}, model.ParseStats{})
 
 	store := fakes.NewCanonicalStore()
 	r, err := store.BeginRebuild(ctx)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
-	if err := r.Put(ctx, model.SessionDoc{Session: model.Session{SessionID: "claude:existing"}}); err != nil {
+	if err := r.Put(ctx, model.SessionDoc{Session: model.Session{Vendor: model.VendorClaude, SessionID: "claude:existing"}}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	if err := r.Commit(ctx); err != nil {

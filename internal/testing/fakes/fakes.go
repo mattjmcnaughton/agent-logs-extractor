@@ -10,6 +10,7 @@ import (
 	"context"
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/model"
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/ports"
@@ -21,6 +22,14 @@ import (
 // every caller of this fake and every real adapter (jsonlstore, #7) return
 // the same sentinel, and callers can errors.Is against either name.
 var ErrRebuildFinished = ports.ErrRebuildFinished
+
+// ErrInvalidSessionDoc is returned by FakeStoreRebuild.Put for a doc whose
+// session id is empty or not namespaced as "<vendor>:<rest>", mirroring
+// jsonlstore's real rejection (jsonlstore.ErrInvalidSessionDoc wraps the
+// same ports.ErrInvalidSessionDoc). Aliased for the same reason
+// ErrRebuildFinished is: one sentinel every caller can errors.Is against
+// regardless of which CanonicalStore they're pointed at.
+var ErrInvalidSessionDoc = ports.ErrInvalidSessionDoc
 
 // FakeConversationSource implements ports.ConversationSource.
 type FakeConversationSource struct {
@@ -135,24 +144,63 @@ type FakeStoreRebuild struct {
 	store   *FakeCanonicalStore
 	pending map[string]model.SessionDoc
 	done    bool
+	// firstErr is the first error any Put or Commit on this rebuild
+	// produced. Once set, Commit refuses to swap — mirrors jsonlstore's B1
+	// fix (rebuild.firstErr in the real adapter) so a lenient #8 sync loop
+	// that treats a Put failure as a counted-not-fatal skip and proceeds to
+	// Commit anyway sees the same "refused, previous generation intact"
+	// behavior against the fake as it would against the real store.
+	firstErr error
 }
 
 // Put stores doc into the pending generation, keyed by session id, or
-// returns PutErrs[doc.Session.SessionID] if scripted. Once the rebuild has
+// returns PutErrs[doc.Session.SessionID] if scripted. It also rejects a doc
+// whose session id is empty or not namespaced as "<vendor>:<rest>" with
+// ErrInvalidSessionDoc, matching jsonlstore's real contract, so #8's core
+// unit tests (which run against this fake) can catch a sync loop that
+// forgets to skip such docs before calling Put. Once the rebuild has
 // finished (Commit or Discard), Put returns ErrRebuildFinished rather than
-// silently writing into a generation nothing can observe.
+// silently writing into a generation nothing can observe. Any Put failure
+// is remembered as firstErr, which poisons every later Commit on this
+// rebuild; later Puts are otherwise unaffected.
 func (r *FakeStoreRebuild) Put(ctx context.Context, doc model.SessionDoc) error {
 	if r.done {
 		return ErrRebuildFinished
 	}
 	if err := r.store.PutErrs[doc.Session.SessionID]; err != nil {
+		r.recordErr(err)
 		return err
+	}
+	if !hasNamespacedSessionID(doc.Session) {
+		r.recordErr(ErrInvalidSessionDoc)
+		return ErrInvalidSessionDoc
 	}
 	r.pending[doc.Session.SessionID] = doc
 	return nil
 }
 
-// Commit returns CommitErr if scripted, leaving the live store untouched;
+// hasNamespacedSessionID reports whether sess has a non-empty vendor and a
+// session id of the form "<vendor>:<rest>" with a non-empty rest — the same
+// shape jsonlstore.relPath requires.
+func hasNamespacedSessionID(sess model.Session) bool {
+	vendor := string(sess.Vendor)
+	if vendor == "" || sess.SessionID == "" {
+		return false
+	}
+	prefix := vendor + ":"
+	return strings.HasPrefix(sess.SessionID, prefix) && sess.SessionID != prefix
+}
+
+// recordErr remembers err as firstErr if nothing has failed on this
+// rebuild yet, matching jsonlstore's rebuild.recordErr.
+func (r *FakeStoreRebuild) recordErr(err error) {
+	if r.firstErr == nil {
+		r.firstErr = err
+	}
+}
+
+// Commit returns firstErr if an earlier Put on this rebuild failed, or
+// CommitErr if scripted, leaving the live store untouched either way;
 // otherwise it replaces the live store wholesale with a copy of the
 // pending generation — a full rebuild, not a merge — and marks the
 // rebuild finished. A copy, not the pending map itself, is stored so a
@@ -163,7 +211,11 @@ func (r *FakeStoreRebuild) Commit(ctx context.Context) error {
 	if r.done {
 		return ErrRebuildFinished
 	}
+	if r.firstErr != nil {
+		return r.firstErr
+	}
 	if err := r.store.CommitErr; err != nil {
+		r.recordErr(err)
 		return err
 	}
 	r.store.Committed = maps.Clone(r.pending)

@@ -19,7 +19,7 @@ func TestFakeCanonicalStoreCommitReplacesTheLiveGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
-	if err := r1.Put(ctx, model.SessionDoc{Session: model.Session{SessionID: "claude:one"}}); err != nil {
+	if err := r1.Put(ctx, model.SessionDoc{Session: model.Session{Vendor: model.VendorClaude, SessionID: "claude:one"}}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	if err := r1.Commit(ctx); err != nil {
@@ -33,7 +33,7 @@ func TestFakeCanonicalStoreCommitReplacesTheLiveGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
-	if err := r2.Put(ctx, model.SessionDoc{Session: model.Session{SessionID: "claude:two"}}); err != nil {
+	if err := r2.Put(ctx, model.SessionDoc{Session: model.Session{Vendor: model.VendorClaude, SessionID: "claude:two"}}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	if err := r2.Commit(ctx); err != nil {
@@ -56,7 +56,7 @@ func TestFakeCanonicalStoreDiscardAndFailedCommitLeaveTheLiveStoreIntact(t *test
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
-	if err := r0.Put(ctx, model.SessionDoc{Session: model.Session{SessionID: "claude:live"}}); err != nil {
+	if err := r0.Put(ctx, model.SessionDoc{Session: model.Session{Vendor: model.VendorClaude, SessionID: "claude:live"}}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	if err := r0.Commit(ctx); err != nil {
@@ -69,7 +69,7 @@ func TestFakeCanonicalStoreDiscardAndFailedCommitLeaveTheLiveStoreIntact(t *test
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
-	if err := r1.Put(ctx, model.SessionDoc{Session: model.Session{SessionID: "claude:discarded"}}); err != nil {
+	if err := r1.Put(ctx, model.SessionDoc{Session: model.Session{Vendor: model.VendorClaude, SessionID: "claude:discarded"}}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	if err := r1.Discard(); err != nil {
@@ -85,7 +85,7 @@ func TestFakeCanonicalStoreDiscardAndFailedCommitLeaveTheLiveStoreIntact(t *test
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
-	if err := r2.Put(ctx, model.SessionDoc{Session: model.Session{SessionID: "claude:failed"}}); err != nil {
+	if err := r2.Put(ctx, model.SessionDoc{Session: model.Session{Vendor: model.VendorClaude, SessionID: "claude:failed"}}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	if err := r2.Commit(ctx); err == nil {
@@ -100,7 +100,7 @@ func TestFakeConversationSourceListsSeededPathsAndUnknownRootYieldsNone(t *testi
 	ctx := context.Background()
 	src := NewConversationSource(model.VendorClaude)
 
-	doc := model.SessionDoc{Session: model.Session{SessionID: "claude:one"}}
+	doc := model.SessionDoc{Session: model.Session{Vendor: model.VendorClaude, SessionID: "claude:one"}}
 	stats := model.ParseStats{Skipped: map[model.SkipReason]int{model.SkipMalformedLine: 1}}
 	src.Seed("/root", "/root/b.jsonl", doc, stats)
 	src.Seed("/root", "/root/a.jsonl", model.SessionDoc{}, model.ParseStats{})
@@ -165,7 +165,7 @@ func TestFakeStoreRebuildDiscardThenCommitErrorsAndLeavesTheLiveStoreIntact(t *t
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
-	if err := r0.Put(ctx, model.SessionDoc{Session: model.Session{SessionID: "claude:live"}}); err != nil {
+	if err := r0.Put(ctx, model.SessionDoc{Session: model.Session{Vendor: model.VendorClaude, SessionID: "claude:live"}}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	if err := r0.Commit(ctx); err != nil {
@@ -177,7 +177,7 @@ func TestFakeStoreRebuildDiscardThenCommitErrorsAndLeavesTheLiveStoreIntact(t *t
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
-	if err := r1.Put(ctx, model.SessionDoc{Session: model.Session{SessionID: "claude:pending"}}); err != nil {
+	if err := r1.Put(ctx, model.SessionDoc{Session: model.Session{Vendor: model.VendorClaude, SessionID: "claude:pending"}}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	if err := r1.Discard(); err != nil {
@@ -207,7 +207,7 @@ func TestFakeStoreRebuildPutAfterCommitDoesNotAliasIntoTheLiveStore(t *testing.T
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
-	if err := r.Put(ctx, model.SessionDoc{Session: model.Session{SessionID: "claude:a"}}); err != nil {
+	if err := r.Put(ctx, model.SessionDoc{Session: model.Session{Vendor: model.VendorClaude, SessionID: "claude:a"}}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	if err := r.Commit(ctx); err != nil {
@@ -239,6 +239,63 @@ func TestFakeStoreRebuildPutAfterCommitDoesNotAliasIntoTheLiveStore(t *testing.T
 	fr.pending["claude:mutated-directly"] = model.SessionDoc{Session: model.Session{SessionID: "claude:mutated-directly"}}
 	if got := store.SessionIDs(); !reflect.DeepEqual(got, want) {
 		t.Errorf("SessionIDs() after mutating pending directly = %v, want %v (Commit must not alias into the live store)", got, want)
+	}
+}
+
+func TestFakeStoreRebuildPutRejectsInvalidSessionDoc(t *testing.T) {
+	ctx := context.Background()
+	store := NewCanonicalStore()
+
+	r, err := store.BeginRebuild(ctx)
+	if err != nil {
+		t.Fatalf("BeginRebuild: %v", err)
+	}
+
+	cases := []model.SessionDoc{
+		{},
+		{Session: model.Session{Vendor: model.VendorClaude, SessionID: "not-namespaced"}},
+		{Session: model.Session{Vendor: model.VendorClaude, SessionID: "codex:wrong-vendor"}},
+	}
+	for _, d := range cases {
+		if err := r.Put(ctx, d); !errors.Is(err, ErrInvalidSessionDoc) {
+			t.Errorf("Put(%+v): got %v, want errors.Is(_, ErrInvalidSessionDoc)", d, err)
+		}
+	}
+}
+
+func TestFakeStoreRebuildCommitAfterFailedPutRefusesToSwap(t *testing.T) {
+	ctx := context.Background()
+	store := NewCanonicalStore()
+
+	// Seed a committed generation.
+	r0, err := store.BeginRebuild(ctx)
+	if err != nil {
+		t.Fatalf("BeginRebuild: %v", err)
+	}
+	if err := r0.Put(ctx, model.SessionDoc{Session: model.Session{Vendor: model.VendorClaude, SessionID: "claude:live"}}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := r0.Commit(ctx); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	want := []string{"claude:live"}
+
+	// A lenient caller that treats a Put failure as a counted-not-fatal
+	// skip and proceeds to Commit anyway must still be refused: Commit
+	// must not swap in a generation known to be missing a doc.
+	r1, err := store.BeginRebuild(ctx)
+	if err != nil {
+		t.Fatalf("BeginRebuild: %v", err)
+	}
+	store.PutErrs["claude:boom"] = errors.New("boom")
+	if err := r1.Put(ctx, model.SessionDoc{Session: model.Session{Vendor: model.VendorClaude, SessionID: "claude:boom"}}); err == nil {
+		t.Fatalf("Put: want scripted error, got nil")
+	}
+	if err := r1.Commit(ctx); err == nil {
+		t.Error("Commit after a failed Put: want error, got nil")
+	}
+	if got := store.SessionIDs(); !reflect.DeepEqual(got, want) {
+		t.Errorf("SessionIDs() after refused Commit = %v, want %v (live store untouched)", got, want)
 	}
 }
 
