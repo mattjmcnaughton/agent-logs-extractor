@@ -37,6 +37,7 @@ internal/
   adapters/
     cli/           # Cobra subcommands, one file each (thin shims)
     claudesource/  # ConversationSource for ~/.claude/projects (Claude Code)
+    jsonlstore/    # CanonicalStore over afero: JSONL store + atomic swap
   testing/
     fakes/         # In-memory fakes for every port
     logfixture/    # Verbatim vendor log fixtures (never hand-edit)

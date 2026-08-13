@@ -20,6 +20,7 @@ internal/
   adapters/
     cli/           # Cobra subcommands (thin shims), one file each
     claudesource/  # ConversationSource for ~/.claude/projects (Claude Code)
+    jsonlstore/    # CanonicalStore over afero: JSONL store + atomic swap
   testing/
     fakes/         # In-memory fakes for every port
     logfixture/    # Verbatim vendor log fixtures
@@ -31,8 +32,9 @@ internal/
 
 Concrete adapters (source parsers, the canonical store, the DuckDB exporter)
 land as their tickets close; the port and use-case shapes above are frozen
-by this ticket for them to build against. `claudesource` (#6) is the first
-to land; `codexsource`, `jsonlstore`, and `duckdbcli` remain to come.
+by this ticket for them to build against. `claudesource` (#6) and
+`jsonlstore` (#7) have landed; `codexsource` and `duckdbcli` remain to
+come.
 
 ## Layering
 
@@ -54,6 +56,7 @@ itself. This is mechanically enforced by `internal/core/arch_test.go`.
 | ---- | ------- |
 | Go | Language and standard library |
 | Cobra | CLI framework and subcommand routing |
+| afero | Filesystem abstraction behind `CanonicalStore` (`jsonlstore`), injectable for unit tests |
 | slog | Structured logging (stdlib) |
 | gofmt | Formatting |
 | go vet | Static analysis |
