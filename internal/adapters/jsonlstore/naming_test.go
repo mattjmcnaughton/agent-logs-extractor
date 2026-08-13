@@ -2,7 +2,7 @@ package jsonlstore
 
 import (
 	"errors"
-	"strconv"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -222,23 +222,15 @@ func TestRelPathRoundTripsBelowLengthCap(t *testing.T) {
 
 // mustUnescapeElement inverts escapeElement for test assertions only; the
 // production code never needs to unescape a filename back to a session id.
+// url.PathUnescape inverts escapeElement exactly: escapeElement never emits
+// a bare "%" or a "+" (both get percent-escaped like any other reserved
+// byte), which are the two characters PathUnescape treats specially versus
+// a plain %XX decode.
 func mustUnescapeElement(t *testing.T, s string) string {
 	t.Helper()
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		if s[i] == '%' {
-			if i+2 >= len(s) {
-				t.Fatalf("malformed percent-escape in %q at %d", s, i)
-			}
-			v, err := strconv.ParseUint(s[i+1:i+3], 16, 8)
-			if err != nil {
-				t.Fatalf("malformed percent-escape in %q: %v", s, err)
-			}
-			b.WriteByte(byte(v))
-			i += 2
-		} else {
-			b.WriteByte(s[i])
-		}
+	out, err := url.PathUnescape(s)
+	if err != nil {
+		t.Fatalf("malformed percent-escape in %q: %v", s, err)
 	}
-	return b.String()
+	return out
 }

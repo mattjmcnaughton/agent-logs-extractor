@@ -16,7 +16,6 @@ type failFs struct {
 	afero.Fs
 
 	OpenFileErr  func(name string, flag int, perm os.FileMode) error
-	CreateErr    func(name string) error
 	RenameErr    func(oldname, newname string) error
 	MkdirAllErr  func(path string, perm os.FileMode) error
 	RemoveAllErr func(path string) error
@@ -29,15 +28,6 @@ func (f *failFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, 
 		}
 	}
 	return f.Fs.OpenFile(name, flag, perm)
-}
-
-func (f *failFs) Create(name string) (afero.File, error) {
-	if f.CreateErr != nil {
-		if err := f.CreateErr(name); err != nil {
-			return nil, err
-		}
-	}
-	return f.Fs.Create(name)
 }
 
 func (f *failFs) Rename(oldname, newname string) error {

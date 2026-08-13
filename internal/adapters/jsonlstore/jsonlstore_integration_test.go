@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -70,14 +71,7 @@ func TestSwapOnRealFilesystem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading final doc: %v", err)
 	}
-	var got model.SessionDoc
-	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	want2 := doc(model.VendorClaude, "bbb-uuid", "gen2-b")
-	if !sessionDocsEqual(got, want2) {
-		t.Errorf("final doc mismatch: got %+v, want %+v", got, want2)
-	}
+	assertDocBytesEqual(t, data, doc(model.VendorClaude, "bbb-uuid", "gen2-b"))
 }
 
 // --- I2 ------------------------------------------------------------------
@@ -580,16 +574,8 @@ func assertFileMapsEqual(t *testing.T, got, want map[string][]byte) {
 
 func assertStringSlicesEqual(t *testing.T, got, want []string) {
 	t.Helper()
-	if len(got) != len(want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
-	gotSet := make(map[string]bool, len(got))
-	for _, g := range got {
-		gotSet[g] = true
-	}
-	for _, w := range want {
-		if !gotSet[w] {
-			t.Fatalf("got %v, want %v (missing %q)", got, want, w)
-		}
+	gotSorted, wantSorted := slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(want))
+	if !slices.Equal(gotSorted, wantSorted) {
+		t.Fatalf("got %v, want %v", gotSorted, wantSorted)
 	}
 }
