@@ -116,10 +116,20 @@ func TestRelPathSessionFileNaming(t *testing.T) {
 				if stem == escapeElement(longRest) {
 					t.Errorf("stem was not truncated/hashed for an over-length id")
 				}
-				if !strings.Contains(stem, "-") {
-					t.Errorf("stem %q missing hash suffix separator", stem)
+				if !strings.Contains(stem, hashSep) {
+					t.Errorf("stem %q missing hash suffix separator %q", stem, hashSep)
 				}
 			},
+		},
+		{
+			name:    "vendor escapes to current-directory traversal",
+			sess:    model.Session{Vendor: ".", SessionID: ".:x"},
+			wantErr: ErrInvalidSessionDoc,
+		},
+		{
+			name:    "vendor escapes to parent-directory traversal",
+			sess:    model.Session{Vendor: "..", SessionID: "..:x"},
+			wantErr: ErrInvalidSessionDoc,
 		},
 	}
 
@@ -154,6 +164,35 @@ func TestRelPathInjectivityAcrossSimilarIDs(t *testing.T) {
 	}
 	if relA == relB {
 		t.Fatalf("distinct session ids %q and %q collided on path %q", sessA.SessionID, sessB.SessionID, relA)
+	}
+}
+
+// TestStemForHashedFormNeverCollidesWithAShortPassThroughID pins the A5
+// fix: before hashSep replaced a literal '-', a short id could equal a long
+// id's truncated+hashed stem exactly, letting two distinct sessions
+// silently overwrite each other. shortRest below is constructed to be the
+// old collision for "claude:" + 250×'a' (verified: its SHA-256, hex-encoded
+// and truncated to 16 chars, is "8a9d854c5de25ce2").
+func TestStemForHashedFormNeverCollidesWithAShortPassThroughID(t *testing.T) {
+	longFullID := "claude:" + strings.Repeat("a", 250)
+	shortRest := strings.Repeat("a", 160) + "-8a9d854c5de25ce2"
+	shortFullID := "claude:" + shortRest
+
+	if len(escapeElement(shortRest)) > maxStem {
+		t.Fatalf("test setup: shortRest must be at or below maxStem so it takes the pass-through path, got len %d", len(escapeElement(shortRest)))
+	}
+
+	longStem := stemFor(longFullID, strings.TrimPrefix(longFullID, "claude:"))
+	shortStem := stemFor(shortFullID, shortRest)
+
+	if longStem == shortStem {
+		t.Fatalf("distinct session ids %q and %q collided on stem %q", longFullID, shortFullID, longStem)
+	}
+	if !strings.Contains(longStem, hashSep) {
+		t.Errorf("hashed stem %q does not contain the unforgeable separator %q", longStem, hashSep)
+	}
+	if shortStem != escapeElement(shortRest) {
+		t.Errorf("short id's stem = %q, want its verbatim escaped form %q", shortStem, escapeElement(shortRest))
 	}
 }
 
