@@ -3,17 +3,17 @@
 // every JSONL line while preserving structure, then re-scans its own
 // output and fails loudly if anything sensitive remains.
 //
-// It never writes under -src. Run via `just scrub-fixture <flags>`.
+// It refuses to run when -src and -dst are nested inside one another (in
+// either direction), so it can never write onto the source tree it was
+// told about. Run via `just scrub-fixture <flags>`.
 package main
 
 import (
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/testing/logfixture/scrub"
@@ -43,8 +43,8 @@ func main() {
 }
 
 func run(args []string, stderr io.Writer) int {
-	fs := flag.NewFlagSet("scrubfixture", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	flags := flag.NewFlagSet("scrubfixture", flag.ContinueOnError)
+	flags.SetOutput(stderr)
 
 	var (
 		src    string
@@ -54,14 +54,14 @@ func run(args []string, stderr io.Writer) int {
 		force  bool
 		maps   mapFlags
 	)
-	fs.StringVar(&src, "src", "", "real session file or directory (read-only)")
-	fs.StringVar(&dst, "dst", "", "destination directory")
-	fs.Var(&maps, "map", "repeatable literal replacement OLD=NEW, applied to line bytes and (encoded) to output paths")
-	fs.StringVar(&branch, "branch", "main", `gitBranch rewrite value (empty string keeps the original)`)
-	fs.BoolVar(&dryRun, "dry-run", false, "report only, write nothing")
-	fs.BoolVar(&force, "force", false, "write even if findings remain")
+	flags.StringVar(&src, "src", "", "real session file or directory (read-only)")
+	flags.StringVar(&dst, "dst", "", "destination directory")
+	flags.Var(&maps, "map", "repeatable literal replacement OLD=NEW, applied to line bytes and (encoded) to output paths")
+	flags.StringVar(&branch, "branch", "main", `gitBranch rewrite value (empty string keeps the original)`)
+	flags.BoolVar(&dryRun, "dry-run", false, "scrub into a scratch directory instead of -dst; verify and report, write nothing under -dst")
+	flags.BoolVar(&force, "force", false, "write even if findings remain")
 
-	if err := fs.Parse(args); err != nil {
+	if err := flags.Parse(args); err != nil {
 		return 2
 	}
 
@@ -80,8 +80,9 @@ func run(args []string, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "scrubfixture: resolving -dst: %v\n", err)
 		return 1
 	}
-	if dstAbs == srcAbs || strings.HasPrefix(dstAbs+string(filepath.Separator), srcAbs+string(filepath.Separator)) {
-		fmt.Fprintln(stderr, "scrubfixture: -dst must not be under -src")
+
+	if err := guardDisjoint(srcAbs, dstAbs); err != nil {
+		fmt.Fprintf(stderr, "scrubfixture: %v\n", err)
 		return 1
 	}
 
@@ -98,47 +99,33 @@ func run(args []string, stderr io.Writer) int {
 		writeDst = tmp
 	}
 
-	before, err := listJSONL(writeDst)
+	written, err := scrub.Tree(srcAbs, writeDst, opts)
 	if err != nil {
 		fmt.Fprintf(stderr, "scrubfixture: %v\n", err)
 		return 1
-	}
-	beforeSet := make(map[string]bool, len(before))
-	for _, f := range before {
-		beforeSet[f] = true
-	}
-
-	if err := scrub.Tree(srcAbs, writeDst, opts); err != nil {
-		fmt.Fprintf(stderr, "scrubfixture: %v\n", err)
-		return 1
-	}
-
-	// Only report/verify files this run actually wrote — dst may be a
-	// shared parent directory (e.g. claude/projects) already holding
-	// unrelated, previously-committed fixtures that Tree never touches.
-	after, err := listJSONL(writeDst)
-	if err != nil {
-		fmt.Fprintf(stderr, "scrubfixture: %v\n", err)
-		return 1
-	}
-	var written []string
-	for _, f := range after {
-		if !beforeSet[f] {
-			written = append(written, f)
-		}
-	}
-	sort.Strings(written)
-
-	if len(written) == 0 {
-		fmt.Fprintln(stderr, "scrubfixture: no new *.jsonl files written (dst already contained every output path)")
 	}
 
 	dirty := false
 	for _, f := range written {
+		rel, _ := filepath.Rel(writeDst, f)
+
 		b, err := os.ReadFile(f)
 		if err != nil {
 			fmt.Fprintf(stderr, "scrubfixture: %v\n", err)
 			return 1
+		}
+
+		if !strings.HasSuffix(f, ".jsonl") {
+			// Non-.jsonl files (e.g. a subagent's .meta.json sidecar) are
+			// copied through verbatim rather than rewritten line-by-line,
+			// but every byte Tree writes still gets scanned before this
+			// tool exits 0.
+			fmt.Fprintf(stderr, "%s: copied verbatim\n", rel)
+			if findings := scrub.Findings(b); findings != nil {
+				dirty = true
+				fmt.Fprintf(stderr, "  findings remain: %v\n", findings)
+			}
+			continue
 		}
 
 		var lines []string
@@ -146,7 +133,6 @@ func run(args []string, stderr io.Writer) int {
 			lines = strings.Split(strings.TrimRight(string(b), "\n"), "\n")
 		}
 
-		rel, _ := filepath.Rel(writeDst, f)
 		fmt.Fprintf(stderr, "%s: %d lines\n", rel, len(lines))
 
 		for i, line := range lines {
@@ -158,7 +144,7 @@ func run(args []string, stderr io.Writer) int {
 	}
 
 	if dryRun {
-		fmt.Fprintln(stderr, "scrubfixture: dry run, nothing written")
+		fmt.Fprintln(stderr, "scrubfixture: dry run, nothing written under -dst")
 		if dirty {
 			return 1
 		}
@@ -173,16 +159,51 @@ func run(args []string, stderr io.Writer) int {
 	return 0
 }
 
-func listJSONL(root string) ([]string, error) {
-	var out []string
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() && strings.HasSuffix(p, ".jsonl") {
-			out = append(out, p)
-		}
-		return nil
-	})
-	return out, err
+// guardDisjoint rejects -src/-dst pairs where either resolved path is a
+// prefix of the other (in either direction), including when a symlink is
+// involved. -dst commonly does not exist yet (scrub.Tree creates it), so
+// resolution walks up to the nearest existing ancestor rather than
+// requiring the full path to exist.
+func guardDisjoint(srcAbs, dstAbs string) error {
+	srcReal, err := evalSymlinksBestEffort(srcAbs)
+	if err != nil {
+		return fmt.Errorf("resolving -src: %w", err)
+	}
+	dstReal, err := evalSymlinksBestEffort(dstAbs)
+	if err != nil {
+		return fmt.Errorf("resolving -dst: %w", err)
+	}
+
+	if srcReal == dstReal || within(dstReal, srcReal) || within(srcReal, dstReal) {
+		return fmt.Errorf("-src and -dst must not be nested inside one another (src=%s dst=%s)", srcReal, dstReal)
+	}
+	return nil
+}
+
+// evalSymlinksBestEffort resolves as much of path as exists via
+// filepath.EvalSymlinks, walking up to the nearest existing ancestor when
+// path itself (or a trailing portion of it) does not exist yet, and
+// rejoining the not-yet-existing suffix unresolved.
+func evalSymlinksBestEffort(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return resolved, nil
+	}
+	if !os.IsNotExist(err) {
+		return "", err
+	}
+
+	parent, base := filepath.Dir(path), filepath.Base(path)
+	if parent == path {
+		return "", err
+	}
+	resolvedParent, perr := evalSymlinksBestEffort(parent)
+	if perr != nil {
+		return "", perr
+	}
+	return filepath.Join(resolvedParent, base), nil
+}
+
+func within(child, parent string) bool {
+	return strings.HasPrefix(child+string(filepath.Separator), parent+string(filepath.Separator))
 }

@@ -117,8 +117,12 @@ func TestLineRewritesForeignHomeDirs(t *testing.T) {
 	}{
 		{"linux foreign home", "/home/alice/project", "/home/user/project"},
 		{"macos foreign home", "/Users/alice/project", "/home/user/project"},
-		{"root prefix", "/root/project", "/home/user/project"},
 		{"already home/user", "/home/user/project", "/home/user/project"},
+		// /root is the generic root home -- identical on every machine, so
+		// it identifies nobody and is left untouched rather than rewritten
+		// (rewriting it would corrupt verbatim vendor paths, e.g. Codex's
+		// real /root/.codex/skills/... listing).
+		{"root left untouched", "/root/project", "/root/project"},
 	}
 
 	for _, tc := range cases {
@@ -235,7 +239,7 @@ func TestTreeRewritesEncodedPaths(t *testing.T) {
 	}
 
 	dstRoot := t.TempDir()
-	err := scrub.Tree(projDir, dstRoot, scrub.Options{
+	written, err := scrub.Tree(projDir, dstRoot, scrub.Options{
 		Maps: []scrub.Rule{{Old: "/tmp/work/proj", New: "/home/user/fixture-project"}},
 	})
 	if err != nil {
@@ -245,6 +249,16 @@ func TestTreeRewritesEncodedPaths(t *testing.T) {
 	wantProjDir := filepath.Join(dstRoot, "-home-user-fixture-project")
 	wantMain := filepath.Join(wantProjDir, "session-uuid-1.jsonl")
 	wantSub := filepath.Join(wantProjDir, "session-uuid-1", "subagents", "agent-abc123.jsonl")
+
+	if len(written) != 2 {
+		t.Fatalf("Tree returned %d written paths, want 2: %v", len(written), written)
+	}
+	wantWritten := map[string]bool{wantMain: true, wantSub: true}
+	for _, w := range written {
+		if !wantWritten[w] {
+			t.Errorf("unexpected written path: %s", w)
+		}
+	}
 
 	mainOut, err := os.ReadFile(wantMain)
 	if err != nil {
@@ -266,10 +280,60 @@ func TestTreeRewritesEncodedPaths(t *testing.T) {
 	}
 }
 
+func TestTreePassesBlankLinesThroughVerbatim(t *testing.T) {
+	srcRoot := t.TempDir()
+	projDir := filepath.Join(srcRoot, "-tmp-work-proj")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// A blank line anywhere but EOF is not valid JSON on its own; pathological
+	// vendor input is exactly where this is expected, and it must not abort
+	// the whole file.
+	mainFile := filepath.Join(projDir, "session-uuid-1.jsonl")
+	mainContent := `{"type":"user","cwd":"/tmp/work/proj"}` + "\n" +
+		"\n" +
+		`{"type":"assistant","cwd":"/tmp/work/proj"}` + "\n"
+	if err := os.WriteFile(mainFile, []byte(mainContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dstRoot := t.TempDir()
+	written, err := scrub.Tree(projDir, dstRoot, scrub.Options{
+		Maps: []scrub.Rule{{Old: "/tmp/work/proj", New: "/home/user/fixture-project"}},
+	})
+	if err != nil {
+		t.Fatalf("Tree: %v", err)
+	}
+	if len(written) != 1 {
+		t.Fatalf("Tree returned %d written paths, want 1: %v", len(written), written)
+	}
+
+	out, err := os.ReadFile(written[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("line count = %d, want 3 (blank line preserved): %q", len(lines), out)
+	}
+	if lines[1] != "" {
+		t.Fatalf("expected blank line to pass through verbatim, got %q", lines[1])
+	}
+}
+
 func TestFindingsCleanAndDirty(t *testing.T) {
 	clean := []byte(`{"type":"user","cwd":"/home/user/project","text":"hello"}`)
 	if f := scrub.Findings(clean); f != nil {
 		t.Fatalf("expected no findings for clean line, got %v", f)
+	}
+
+	// /root identifies nobody -- it must never be a finding, or the guard
+	// test would have to exclude Codex fixtures again (they legitimately
+	// cite /root/.codex/skills/... paths).
+	rootPath := []byte(`{"type":"user","text":"see /root/.codex/skills/foo.md"}`)
+	if f := scrub.Findings(rootPath); f != nil {
+		t.Fatalf("expected no findings for a /root path, got %v", f)
 	}
 
 	dirty := []byte(`{"type":"user","cwd":"/home/alice/project","text":"email me at alice@example.org"}`)
