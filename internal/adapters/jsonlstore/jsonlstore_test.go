@@ -591,6 +591,86 @@ func TestCommitAfterFailedPutRefusesToSwap(t *testing.T) {
 	assertSnapshotsEqual(t, after, before)
 }
 
+// TestCommitAfterRejectedDocRefusesToSwap pins the A2 finding: "a rejected
+// doc (ErrInvalidSessionDoc) poisons the rebuild" was documented in three
+// places but pinned by no test in either tier. Unlike U12b (a marshal
+// failure), this exercises the naming-boundary rejection itself — the exact
+// contract #8's sync loop is told to rely on — and asserts the previous
+// generation survives byte-identically, not just "Commit errors".
+func TestCommitAfterRejectedDocRefusesToSwap(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	store := New(fsys, "/store", nil)
+
+	commitDocs(t, store, doc(model.VendorClaude, "aaa-uuid", "gen1"))
+	before := snapshotBytes(t, fsys, filepath.Join(store.Root(), sessionsDir))
+
+	ctx := context.Background()
+	r, err := store.BeginRebuild(ctx)
+	if err != nil {
+		t.Fatalf("BeginRebuild: %v", err)
+	}
+	defer r.Discard()
+
+	if err := r.Put(ctx, doc(model.VendorClaude, "bbb-uuid", "gen2")); err != nil {
+		t.Fatalf("Put(good doc): %v", err)
+	}
+
+	badDoc := doc(model.VendorClaude, "ccc-uuid", "gen2-rejected")
+	badDoc.Session.SessionID = "not-namespaced"
+	if err := r.Put(ctx, badDoc); !errors.Is(err, ErrInvalidSessionDoc) {
+		t.Fatalf("Put(rejected doc): got %v, want errors.Is(_, ErrInvalidSessionDoc)", err)
+	}
+
+	if err := r.Commit(ctx); err == nil {
+		t.Fatalf("Commit after a rejected Put should refuse to swap, got nil error")
+	}
+
+	after := snapshotBytes(t, fsys, filepath.Join(store.Root(), sessionsDir))
+	assertSnapshotsEqual(t, after, before)
+}
+
+// TestPutOnCancelledContextPoisonsCommit pins the A1 fix: before it, Put's
+// ctx.Err() early return bypassed recordErr, so a per-Put cancelled context
+// was the one Put failure that did not poison the rebuild. This reproduces
+// the reviewer's exact scenario: gen1 = {aaa, bbb}; begin gen2; Put(liveCtx,
+// aaa') succeeds; Put(cancelledCtx, bbb') fails with context.Canceled; then
+// Commit(liveCtx) must refuse rather than swap in a generation silently
+// missing bbb.
+func TestPutOnCancelledContextPoisonsCommit(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	store := New(fsys, "/store", nil)
+
+	commitDocs(t, store,
+		doc(model.VendorClaude, "aaa-uuid", "gen1-a"),
+		doc(model.VendorClaude, "bbb-uuid", "gen1-b"),
+	)
+	before := snapshotBytes(t, fsys, filepath.Join(store.Root(), sessionsDir))
+
+	liveCtx := context.Background()
+	r, err := store.BeginRebuild(liveCtx)
+	if err != nil {
+		t.Fatalf("BeginRebuild: %v", err)
+	}
+	defer r.Discard()
+
+	if err := r.Put(liveCtx, doc(model.VendorClaude, "aaa-uuid", "gen2-a")); err != nil {
+		t.Fatalf("Put(aaa') with the live context should succeed: %v", err)
+	}
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := r.Put(cancelled, doc(model.VendorClaude, "bbb-uuid", "gen2-b")); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Put(bbb') with a cancelled context: got %v, want errors.Is(_, context.Canceled)", err)
+	}
+
+	if err := r.Commit(liveCtx); err == nil {
+		t.Fatalf("Commit with the live context should refuse to swap after a cancelled-context Put, got nil error")
+	}
+
+	after := snapshotBytes(t, fsys, filepath.Join(store.Root(), sessionsDir))
+	assertSnapshotsEqual(t, after, before)
+}
+
 // --- U13 -----------------------------------------------------------------
 
 func TestCommitRenameFailureRollsBack(t *testing.T) {

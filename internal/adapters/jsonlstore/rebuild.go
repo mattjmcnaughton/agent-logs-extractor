@@ -41,6 +41,7 @@ func (r *rebuild) Put(ctx context.Context, doc model.SessionDoc) error {
 		return ports.ErrRebuildFinished
 	}
 	if err := ctx.Err(); err != nil {
+		r.recordErr(err)
 		return err
 	}
 

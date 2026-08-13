@@ -332,6 +332,55 @@ func TestCommitAfterFailedPutRefusesToSwapOnRealFilesystem(t *testing.T) {
 	assertFileMapsEqual(t, after, before)
 }
 
+// --- I3c -----------------------------------------------------------------
+
+// TestCommitAfterRejectedDocRefusesToSwapOnRealFilesystem mirrors the A2
+// unit test on a real filesystem: a doc rejected by relPath/ValidSessionDoc
+// (ErrInvalidSessionDoc) must poison the rebuild exactly like an I/O or
+// marshal failure does, and the previous generation must survive
+// byte-identically.
+func TestCommitAfterRejectedDocRefusesToSwapOnRealFilesystem(t *testing.T) {
+	root := t.TempDir()
+	fsys := afero.NewOsFs()
+	store := New(fsys, root, nil)
+	ctx := context.Background()
+
+	r1, err := store.BeginRebuild(ctx)
+	if err != nil {
+		t.Fatalf("BeginRebuild: %v", err)
+	}
+	if err := r1.Put(ctx, doc(model.VendorClaude, "aaa-uuid", "gen1")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := r1.Commit(ctx); err != nil {
+		t.Fatalf("Commit gen1: %v", err)
+	}
+	before := readFileMap(t, filepath.Join(root, "sessions"))
+
+	r2, err := store.BeginRebuild(ctx)
+	if err != nil {
+		t.Fatalf("BeginRebuild gen2: %v", err)
+	}
+	defer r2.Discard()
+
+	if err := r2.Put(ctx, doc(model.VendorClaude, "bbb-uuid", "gen2")); err != nil {
+		t.Fatalf("Put(good doc): %v", err)
+	}
+
+	badDoc := doc(model.VendorClaude, "ccc-uuid", "gen2-rejected")
+	badDoc.Session.SessionID = "not-namespaced"
+	if err := r2.Put(ctx, badDoc); err == nil {
+		t.Fatalf("Put(rejected doc) should have failed with ErrInvalidSessionDoc")
+	}
+
+	if err := r2.Commit(ctx); err == nil {
+		t.Fatalf("Commit after a rejected Put should refuse to swap, got nil error")
+	}
+
+	after := readFileMap(t, filepath.Join(root, "sessions"))
+	assertFileMapsEqual(t, after, before)
+}
+
 // --- I4 ------------------------------------------------------------------
 
 func TestCommitFailsWhenSessionsIsNotADirectoryOnRealFilesystem(t *testing.T) {
