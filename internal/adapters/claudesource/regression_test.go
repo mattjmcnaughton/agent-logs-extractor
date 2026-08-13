@@ -96,27 +96,51 @@ func TestSessionMetaPrefersParentAfterMergeSort(t *testing.T) {
 // at its zero value, and normalize's start/end scan must skip that message
 // entirely rather than letting a zero CreatedAt drag Session.StartedAt down
 // to 0001-01-01.
+// Both orderings are covered deliberately. With the untimestamped record
+// FIRST the mutation is masked: start is still zero when the loop reaches
+// it, so the assignment is immediately overwritten by the start.IsZero()
+// sentinel on the next message, and dropping the guard changes nothing.
+// The guard only bites when a zero CreatedAt arrives AFTER a non-zero one,
+// where zero.Before(start) drags StartedAt to 0001-01-01. A test that
+// pinned only the first ordering would pass with the guard deleted.
 func TestZeroCreatedAtExcludedFromSessionSpan(t *testing.T) {
 	src := claudesource.New(nil)
 	ctx := context.Background()
 
-	lines := []string{
-		`{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"first"},"uuid":"u1","timestamp":"","cwd":"/tmp/proj","sessionId":"sess-1","version":"1.0.0","gitBranch":"main"}`,
-		`{"parentUuid":"u1","isSidechain":false,"type":"assistant","message":{"model":"m","role":"assistant","content":"second"},"uuid":"u2","timestamp":"2026-01-01T00:00:05Z","cwd":"/tmp/proj","sessionId":"sess-1","version":"1.0.0","gitBranch":"main"}`,
-	}
-	path := writeSyntheticSession(t, lines)
+	const (
+		untimestampedFirstUUID = "u1"
+		stampedUUID            = "u2"
+	)
+	stamped := `{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"stamped"},"uuid":"` + stampedUUID + `","timestamp":"2026-01-01T00:00:05Z","cwd":"/tmp/proj","sessionId":"sess-1","version":"1.0.0","gitBranch":"main"}`
+	untimestamped := `{"parentUuid":null,"isSidechain":false,"type":"assistant","message":{"model":"m","role":"assistant","content":"unstamped"},"uuid":"` + untimestampedFirstUUID + `","timestamp":"","cwd":"/tmp/proj","sessionId":"sess-1","version":"1.0.0","gitBranch":"main"}`
 
-	doc, _, err := src.Parse(ctx, path)
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
+	for _, tc := range []struct {
+		name  string
+		lines []string
+	}{
+		{"untimestamped first", []string{untimestamped, stamped}},
+		// The ordering that actually detects a missing guard.
+		{"untimestamped last", []string{stamped, untimestamped}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeSyntheticSession(t, tc.lines)
 
-	want := time.Date(2026, 1, 1, 0, 0, 5, 0, time.UTC)
-	if doc.Session.StartedAt.IsZero() {
-		t.Fatal("StartedAt is zero, want it to skip the untimestamped message and pick up the second message's timestamp")
-	}
-	if !doc.Session.StartedAt.Equal(want) {
-		t.Errorf("StartedAt = %s, want %s", doc.Session.StartedAt, want)
+			doc, _, err := src.Parse(ctx, path)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+
+			want := time.Date(2026, 1, 1, 0, 0, 5, 0, time.UTC)
+			if doc.Session.StartedAt.IsZero() {
+				t.Fatal("StartedAt is zero, want the untimestamped message skipped and the stamped message's timestamp used")
+			}
+			if !doc.Session.StartedAt.Equal(want) {
+				t.Errorf("StartedAt = %s, want %s", doc.Session.StartedAt, want)
+			}
+			if !doc.Session.EndedAt.Equal(want) {
+				t.Errorf("EndedAt = %s, want %s", doc.Session.EndedAt, want)
+			}
+		})
 	}
 }
 
