@@ -259,3 +259,92 @@ func TestRunVerifiesCopiedNonJSONLFiles(t *testing.T) {
 		t.Fatalf("expected sidecar finding to be reported, stderr:\n%s", stderr.String())
 	}
 }
+
+// TestRunDryRunHonorsForce pins that -dry-run and a real run agree on exit
+// code: -force means "write/report anyway" in both, so a dirty dry run
+// with -force must not exit 1 where the real run exits 0.
+func TestRunDryRunHonorsForce(t *testing.T) {
+	work := t.TempDir()
+	projDir := filepath.Join(work, "src", "-home-user-proj")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projDir, "s1.jsonl"),
+		[]byte(`{"type":"user","gitBranch":"main"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// -branch splices its value in after redactBuiltins runs, so it is the
+	// one way to leave a genuine finding in otherwise-scrubbed output.
+	args := []string{"-src", projDir, "-dst", filepath.Join(work, "dst"), "-branch", "leak@evil.example.org"}
+
+	var dirtyErr bytes.Buffer
+	if code := run(args, &dirtyErr); code == 0 {
+		t.Fatalf("expected non-zero exit without -force; stderr:\n%s", dirtyErr.String())
+	}
+
+	var forcedErr bytes.Buffer
+	if code := run(append(append([]string{}, args...), "-force"), &forcedErr); code != 0 {
+		t.Fatalf("real run with -force: got %d, want 0; stderr:\n%s", code, forcedErr.String())
+	}
+
+	var dryErr bytes.Buffer
+	if code := run(append(append([]string{}, args...), "-dry-run", "-force"), &dryErr); code != 0 {
+		t.Fatalf("dry run with -force: got %d, want 0 (must agree with the real run); stderr:\n%s", code, dryErr.String())
+	}
+}
+
+// TestRunWarnsWhenPathMapDoesNotRename pins the warning for the silent
+// failure mode behind the fixture recipes: Claude encodes a project
+// directory from the cwd by replacing every non-alphanumeric character
+// with "-", while renamePath encodes only "/". A -map Old containing a "."
+// (mktemp's default tmp.XXXXXXXXXX template) therefore never matches the
+// encoded directory name, contents scrub clean, and without this warning
+// the run reports success while writing the generating machine's real
+// path into the fixture tree.
+func TestRunWarnsWhenPathMapDoesNotRename(t *testing.T) {
+	work := t.TempDir()
+	// What Claude writes for cwd /tmp/tmp.w1huSTDYAv/proj: every
+	// non-alphanumeric character, the "." included, encoded to "-".
+	projDir := filepath.Join(work, "src", "-tmp-tmp-w1huSTDYAv-proj")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projDir, "s1.jsonl"),
+		[]byte(`{"type":"user","cwd":"/tmp/tmp.w1huSTDYAv/proj"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := filepath.Join(work, "dst")
+	var stderr bytes.Buffer
+	code := run([]string{
+		"-src", projDir, "-dst", dst,
+		"-map", "/tmp/tmp.w1huSTDYAv/proj=/home/user/fixture-x",
+	}, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0 (warning, not failure), got %d; stderr:\n%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "did not rename any output path") {
+		t.Fatalf("expected an unapplied-path-map warning, stderr:\n%s", stderr.String())
+	}
+
+	// A -map that does line up must stay quiet.
+	okDir := filepath.Join(work, "src2", "-tmp-fixture-proj")
+	if err := os.MkdirAll(okDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(okDir, "s1.jsonl"),
+		[]byte(`{"type":"user","cwd":"/tmp/fixture/proj"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var quiet bytes.Buffer
+	if code := run([]string{
+		"-src", okDir, "-dst", filepath.Join(work, "dst2"),
+		"-map", "/tmp/fixture/proj=/home/user/fixture-x",
+	}, &quiet); code != 0 {
+		t.Fatalf("clean rename: got %d, want 0; stderr:\n%s", code, quiet.String())
+	}
+	if strings.Contains(quiet.String(), "did not rename any output path") {
+		t.Fatalf("unexpected warning for an applied -map, stderr:\n%s", quiet.String())
+	}
+}
