@@ -22,6 +22,9 @@ internal/
   testing/
     fakes/         # In-memory fakes for every port
     logfixture/    # Verbatim vendor log fixtures
+      scrub/       # Scrub engine: strips/replaces sensitive text in fixture JSONL
+  tools/
+    scrubfixture/  # CLI over logfixture/scrub, wired via `just scrub-fixture`
   version/         # Version string
 ```
 
