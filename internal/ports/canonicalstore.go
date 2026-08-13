@@ -2,9 +2,15 @@ package ports
 
 import (
 	"context"
+	"errors"
 
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/model"
 )
+
+// ErrRebuildFinished is what Put and Commit return once a rebuild has been
+// committed or discarded. Implementations must return it (or wrap it) so
+// callers can errors.Is against one value regardless of adapter.
+var ErrRebuildFinished = errors.New("ports: store rebuild already finished")
 
 // CanonicalStore owns the normalized store this tool writes. Every sync is
 // a full rebuild (TDD decision 6): callers build a complete new generation
@@ -24,8 +30,8 @@ type CanonicalStore interface {
 }
 
 // StoreRebuild accumulates one pending store generation. Once the rebuild
-// is finished — committed or discarded — Put and Commit return an error;
-// the generation is gone.
+// is finished — committed or discarded — Put and Commit return
+// ErrRebuildFinished (or wrap it); the generation is gone.
 type StoreRebuild interface {
 	// Put writes one session doc into the pending generation. Putting the
 	// same session id twice replaces the earlier doc.

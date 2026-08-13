@@ -8,7 +8,6 @@ package fakes
 
 import (
 	"context"
-	"errors"
 	"maps"
 	"slices"
 
@@ -18,8 +17,10 @@ import (
 
 // ErrRebuildFinished is returned by FakeStoreRebuild once a rebuild has
 // been committed or discarded: a real store rejects writes to a swapped-out
-// generation, and the fake must too.
-var ErrRebuildFinished = errors.New("fakes: rebuild already finished")
+// generation, and the fake must too. Aliased to ports.ErrRebuildFinished so
+// every caller of this fake and every real adapter (jsonlstore, #7) return
+// the same sentinel, and callers can errors.Is against either name.
+var ErrRebuildFinished = ports.ErrRebuildFinished
 
 // FakeConversationSource implements ports.ConversationSource.
 type FakeConversationSource struct {
