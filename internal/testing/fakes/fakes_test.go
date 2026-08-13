@@ -255,6 +255,10 @@ func TestFakeStoreRebuildPutRejectsInvalidSessionDoc(t *testing.T) {
 		{},
 		{Session: model.Session{Vendor: model.VendorClaude, SessionID: "not-namespaced"}},
 		{Session: model.Session{Vendor: model.VendorClaude, SessionID: "codex:wrong-vendor"}},
+		// Traversal-vendor rejection (A3): the fake must reject this the
+		// same way jsonlstore.relPath does, now that both call
+		// ports.ValidSessionDoc.
+		{Session: model.Session{Vendor: "..", SessionID: "..:x"}},
 	}
 	for _, d := range cases {
 		if err := r.Put(ctx, d); !errors.Is(err, ErrInvalidSessionDoc) {
@@ -296,6 +300,99 @@ func TestFakeStoreRebuildCommitAfterFailedPutRefusesToSwap(t *testing.T) {
 	}
 	if got := store.SessionIDs(); !reflect.DeepEqual(got, want) {
 		t.Errorf("SessionIDs() after refused Commit = %v, want %v (live store untouched)", got, want)
+	}
+}
+
+// TestFakeStoreRebuildCommitAfterRejectedDocRefusesToSwap pins the A2
+// finding for the fake: an ErrInvalidSessionDoc rejection (not just a
+// scripted PutErrs failure) must poison Commit, mirroring
+// TestCommitAfterRejectedDocRefusesToSwap in the jsonlstore package so the
+// two implementations of this contract can't drift apart.
+func TestFakeStoreRebuildCommitAfterRejectedDocRefusesToSwap(t *testing.T) {
+	ctx := context.Background()
+	store := NewCanonicalStore()
+
+	r0, err := store.BeginRebuild(ctx)
+	if err != nil {
+		t.Fatalf("BeginRebuild: %v", err)
+	}
+	if err := r0.Put(ctx, model.SessionDoc{Session: model.Session{Vendor: model.VendorClaude, SessionID: "claude:live"}}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := r0.Commit(ctx); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	want := []string{"claude:live"}
+
+	r1, err := store.BeginRebuild(ctx)
+	if err != nil {
+		t.Fatalf("BeginRebuild: %v", err)
+	}
+	if err := r1.Put(ctx, model.SessionDoc{Session: model.Session{Vendor: model.VendorClaude, SessionID: "claude:good"}}); err != nil {
+		t.Fatalf("Put(good doc): %v", err)
+	}
+	rejected := model.SessionDoc{Session: model.Session{Vendor: model.VendorClaude, SessionID: "not-namespaced"}}
+	if err := r1.Put(ctx, rejected); !errors.Is(err, ErrInvalidSessionDoc) {
+		t.Fatalf("Put(rejected doc): got %v, want errors.Is(_, ErrInvalidSessionDoc)", err)
+	}
+
+	if err := r1.Commit(ctx); err == nil {
+		t.Error("Commit after a rejected Put: want error, got nil")
+	}
+	if got := store.SessionIDs(); !reflect.DeepEqual(got, want) {
+		t.Errorf("SessionIDs() after refused Commit = %v, want %v (live store untouched)", got, want)
+	}
+}
+
+// TestFakeStoreRebuildAndStoreRejectCancelledContext pins the A3 fix: the
+// fake previously checked no ctx.Err() at all, while the real
+// jsonlstore.Store checks it on BeginRebuild, Put, and Commit. This asserts
+// the fake now matches on all three, and that a cancelled-context Put also
+// poisons a subsequent Commit exactly as jsonlstore's
+// TestPutOnCancelledContextPoisonsCommit pins for the real adapter.
+func TestFakeStoreRebuildAndStoreRejectCancelledContext(t *testing.T) {
+	store := NewCanonicalStore()
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := store.BeginRebuild(cancelled); !errors.Is(err, context.Canceled) {
+		t.Errorf("BeginRebuild(cancelled): got %v, want errors.Is(_, context.Canceled)", err)
+	}
+
+	liveCtx := context.Background()
+	r, err := store.BeginRebuild(liveCtx)
+	if err != nil {
+		t.Fatalf("BeginRebuild: %v", err)
+	}
+	if err := r.Put(liveCtx, model.SessionDoc{Session: model.Session{Vendor: model.VendorClaude, SessionID: "claude:a"}}); err != nil {
+		t.Fatalf("Put(live ctx): %v", err)
+	}
+	if err := r.Put(cancelled, model.SessionDoc{Session: model.Session{Vendor: model.VendorClaude, SessionID: "claude:b"}}); !errors.Is(err, context.Canceled) {
+		t.Errorf("Put(cancelled): got %v, want errors.Is(_, context.Canceled)", err)
+	}
+	if err := r.Commit(liveCtx); err == nil {
+		t.Error("Commit after a cancelled-context Put should refuse to swap, got nil error")
+	}
+	if got := store.SessionIDs(); len(got) != 0 {
+		t.Errorf("SessionIDs() = %v, want empty (live store never committed)", got)
+	}
+
+	// Commit's own ctx.Err() check, independent of firstErr: a fresh
+	// rebuild with no failed Put yet, committed with an already-cancelled
+	// context, must still be rejected.
+	r2, err := store.BeginRebuild(liveCtx)
+	if err != nil {
+		t.Fatalf("BeginRebuild: %v", err)
+	}
+	if err := r2.Put(liveCtx, model.SessionDoc{Session: model.Session{Vendor: model.VendorClaude, SessionID: "claude:c"}}); err != nil {
+		t.Fatalf("Put(live ctx): %v", err)
+	}
+	if err := r2.Commit(cancelled); !errors.Is(err, context.Canceled) {
+		t.Errorf("Commit(cancelled) on an otherwise-clean rebuild: got %v, want errors.Is(_, context.Canceled)", err)
+	}
+	if got := store.SessionIDs(); len(got) != 0 {
+		t.Errorf("SessionIDs() = %v, want empty (live store never committed)", got)
 	}
 }
 
