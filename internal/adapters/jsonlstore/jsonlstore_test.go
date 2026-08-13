@@ -663,6 +663,43 @@ func TestMarshalFailureMidWriteLeavesPreviousStoreIntact(t *testing.T) {
 	assertSnapshotsEqual(t, after, before)
 }
 
+// --- U12b ------------------------------------------------------------------
+
+// TestCommitAfterFailedPutRefusesToSwap pins the B1 fix: a Commit that
+// follows a failed Put must not swap in a generation known to be missing a
+// doc. Before the fix, Commit had no memory of the Put failure and happily
+// replaced a good previous generation with a truncated one.
+func TestCommitAfterFailedPutRefusesToSwap(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	store := New(fsys, "/store", nil)
+
+	commitDocs(t, store, doc(model.VendorClaude, "aaa-uuid", "gen1"))
+	before := snapshotBytes(t, fsys, filepath.Join(store.Root(), sessionsDir))
+
+	ctx := context.Background()
+	r, err := store.BeginRebuild(ctx)
+	if err != nil {
+		t.Fatalf("BeginRebuild: %v", err)
+	}
+	defer r.Discard()
+
+	badDoc := doc(model.VendorClaude, "bbb-uuid", "gen2-bad")
+	// Same non-nil, zero-length json.RawMessage marshal failure as U12,
+	// but here the point is what Commit does afterward, not what Discard
+	// leaves behind.
+	badDoc.Messages[0].Raw = json.RawMessage([]byte{})
+	if err := r.Put(ctx, badDoc); err == nil {
+		t.Fatalf("Put(bad doc) should have failed to marshal")
+	}
+
+	if err := r.Commit(ctx); err == nil {
+		t.Fatalf("Commit after a failed Put should refuse to swap, got nil error")
+	}
+
+	after := snapshotBytes(t, fsys, filepath.Join(store.Root(), sessionsDir))
+	assertSnapshotsEqual(t, after, before)
+}
+
 // --- U13 -----------------------------------------------------------------
 
 func TestCommitRenameFailureRollsBack(t *testing.T) {
@@ -719,6 +756,147 @@ func TestCommitRenameFailureRollsBack(t *testing.T) {
 	}
 }
 
+// TestCommitRollbackFailureRelocatesToOrphanPrefix pins the A6
+// rollback-failure fix: when both the swap rename and the rollback rename
+// fail, "sessions/" is left absent, and the previous generation must not be
+// left at a trashPrefix path — sweep() would delete exactly that path on
+// the very next BeginRebuild, expiring the recovery pointer the returned
+// error names. It must instead be relocated to an orphanPrefix path that
+// sweep leaves alone.
+func TestCommitRollbackFailureRelocatesToOrphanPrefix(t *testing.T) {
+	base := afero.NewMemMapFs()
+
+	plainStore := New(base, "/store", nil)
+	commitDocs(t, plainStore, doc(model.VendorClaude, "aaa-uuid", "gen1"))
+	gen1Bytes := snapshotBytes(t, base, filepath.Join(plainStore.Root(), sessionsDir))
+
+	liveDir := filepath.Join("/store", sessionsDir)
+	failing := &failFs{
+		Fs: base,
+		RenameErr: func(oldname, newname string) error {
+			if newname != liveDir {
+				return nil
+			}
+			switch {
+			case strings.HasPrefix(filepath.Base(oldname), stagingPrefix):
+				return errors.New("injected: rename staging -> sessions failed")
+			case strings.HasPrefix(filepath.Base(oldname), trashPrefix):
+				return errors.New("injected: rollback rename trash -> sessions failed")
+			default:
+				return nil
+			}
+		},
+	}
+	failStore := New(failing, "/store", nil)
+
+	ctx := context.Background()
+	r, err := failStore.BeginRebuild(ctx)
+	if err != nil {
+		t.Fatalf("BeginRebuild: %v", err)
+	}
+	defer r.Discard()
+
+	if err := r.Put(ctx, doc(model.VendorClaude, "bbb-uuid", "gen2")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	commitErr := r.Commit(ctx)
+	if commitErr == nil {
+		t.Fatalf("Commit should have failed via both injected rename faults")
+	}
+	if !strings.Contains(commitErr.Error(), orphanPrefix) {
+		t.Errorf("Commit error should name the orphan recovery path, got: %v", commitErr)
+	}
+
+	rootEntries := dirEntryNames(t, base, plainStore.Root())
+	if hasPrefixEntry(rootEntries, trashPrefix) {
+		t.Errorf("expected the previous generation to be relocated out of the trash prefix, got entries %v", rootEntries)
+	}
+	var orphanDir string
+	for _, name := range rootEntries {
+		if strings.HasPrefix(name, orphanPrefix) {
+			orphanDir = filepath.Join(plainStore.Root(), name)
+		}
+	}
+	if orphanDir == "" {
+		t.Fatalf("expected an orphan-prefixed directory, got entries %v", rootEntries)
+	}
+	orphanBytes := snapshotBytes(t, base, orphanDir)
+	assertSnapshotsEqual(t, orphanBytes, gen1Bytes)
+
+	// The orphan directory must survive a subsequent BeginRebuild's sweep —
+	// that is the entire point of relocating out of the trash prefix.
+	r2, err := plainStore.BeginRebuild(ctx)
+	if err != nil {
+		t.Fatalf("BeginRebuild after orphaning: %v", err)
+	}
+	defer r2.Discard()
+	exists, err := afero.DirExists(base, orphanDir)
+	if err != nil {
+		t.Fatalf("checking orphan dir exists: %v", err)
+	}
+	if !exists {
+		t.Errorf("expected the orphan directory to survive a subsequent BeginRebuild's sweep")
+	}
+}
+
+// TestCommitMovesPreviousGenerationAsideBeforeAttemptingTheSwap kills the
+// mutation where Commit's first rename (live -> trash) is deleted entirely,
+// collapsing the two-rename swap into one clobbering rename. On MemMapFs a
+// rename onto an existing directory silently succeeds, so the one-rename
+// and two-rename designs are observationally identical to every other test
+// in this file — that mutation passed the whole unit suite even though the
+// integration tier (a real filesystem, where the clobbering rename fails
+// with ENOTEMPTY/EEXIST) catches it immediately. This test instead asserts
+// the aside-move itself as an outcome: by the moment the second rename is
+// attempted, the previous generation's bytes must already be readable back
+// at the trash path. Delete the first rename and nothing is ever written to
+// a trashPrefix directory, so this snapshot comes back empty and the
+// comparison below fails.
+func TestCommitMovesPreviousGenerationAsideBeforeAttemptingTheSwap(t *testing.T) {
+	base := afero.NewMemMapFs()
+
+	plainStore := New(base, "/store", nil)
+	commitDocs(t, plainStore, doc(model.VendorClaude, "aaa-uuid", "gen1"))
+	gen1Bytes := snapshotBytes(t, base, filepath.Join(plainStore.Root(), sessionsDir))
+
+	liveDir := filepath.Join("/store", sessionsDir)
+	var trashSnapshotAtSecondRename map[string][]byte
+	secondRenameSeen := false
+
+	failing := &failFs{
+		Fs: base,
+		RenameErr: func(oldname, newname string) error {
+			if !strings.HasPrefix(filepath.Base(oldname), stagingPrefix) || newname != liveDir {
+				return nil
+			}
+			secondRenameSeen = true
+			trashName := trashPrefix + strings.TrimPrefix(filepath.Base(oldname), stagingPrefix)
+			trashSnapshotAtSecondRename = snapshotBytes(t, base, filepath.Join("/store", trashName))
+			return errors.New("injected: rename staging -> sessions failed")
+		},
+	}
+	failStore := New(failing, "/store", nil)
+
+	ctx := context.Background()
+	r, err := failStore.BeginRebuild(ctx)
+	if err != nil {
+		t.Fatalf("BeginRebuild: %v", err)
+	}
+	defer r.Discard()
+
+	if err := r.Put(ctx, doc(model.VendorClaude, "bbb-uuid", "gen2")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := r.Commit(ctx); err == nil {
+		t.Fatalf("Commit should have failed via the injected rename fault")
+	}
+
+	if !secondRenameSeen {
+		t.Fatalf("the second rename (staging -> sessions) was never attempted")
+	}
+	assertSnapshotsEqual(t, trashSnapshotAtSecondRename, gen1Bytes)
+}
+
 // --- U14 -----------------------------------------------------------------
 
 func TestLeftoverStagingAndTrashSweptOnBeginRebuild(t *testing.T) {
@@ -730,6 +908,15 @@ func TestLeftoverStagingAndTrashSweptOnBeginRebuild(t *testing.T) {
 
 	staleStaging := filepath.Join(store.Root(), stagingPrefix+"stale")
 	staleTrash := filepath.Join(store.Root(), trashPrefix+"stale")
+	// MemMapFs creates missing parents implicitly on WriteFile; a real
+	// filesystem does not, so these MkdirAlls are what keeps this setup
+	// portable to afero.NewOsFs().
+	if err := fsys.MkdirAll(filepath.Join(staleStaging, "claude"), dirMode); err != nil {
+		t.Fatalf("creating stale staging dir: %v", err)
+	}
+	if err := fsys.MkdirAll(filepath.Join(staleTrash, "claude"), dirMode); err != nil {
+		t.Fatalf("creating stale trash dir: %v", err)
+	}
 	if err := afero.WriteFile(fsys, filepath.Join(staleStaging, "claude", "leftover.json"), []byte("{}\n"), fileMode); err != nil {
 		t.Fatalf("seeding stale staging dir: %v", err)
 	}
@@ -849,6 +1036,12 @@ func TestCommitFailsWhenSessionsIsNotADirectory(t *testing.T) {
 	store := New(fsys, "/store", nil)
 
 	sessionsPath := filepath.Join(store.Root(), sessionsDir)
+	// MemMapFs creates missing parents implicitly on WriteFile; a real
+	// filesystem does not, so this MkdirAll is what keeps this setup
+	// portable to afero.NewOsFs().
+	if err := fsys.MkdirAll(store.Root(), dirMode); err != nil {
+		t.Fatalf("creating store root: %v", err)
+	}
 	if err := afero.WriteFile(fsys, sessionsPath, []byte("not a directory"), fileMode); err != nil {
 		t.Fatalf("seeding sessions-as-a-file: %v", err)
 	}

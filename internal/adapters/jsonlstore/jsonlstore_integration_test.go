@@ -121,6 +121,49 @@ func TestDiscardOnRealFilesystem(t *testing.T) {
 	}
 }
 
+// --- I2b -----------------------------------------------------------------
+
+// TestPutRejectsVendorTraversalOnRealFilesystem pins the B2 fix on a real
+// filesystem: before it, a Vendor of ".." escaped to itself and relPath
+// joined it as a directory element, so Put wrote a file as a sibling of the
+// staging directory (inside the store root but outside "<staging>/") that
+// survived Commit as a stray file forever. Vendor "." would similarly
+// resolve to the staging directory itself.
+func TestPutRejectsVendorTraversalOnRealFilesystem(t *testing.T) {
+	root := t.TempDir()
+	fsys := afero.NewOsFs()
+	store := New(fsys, root, nil)
+	ctx := context.Background()
+
+	r, err := store.BeginRebuild(ctx)
+	if err != nil {
+		t.Fatalf("BeginRebuild: %v", err)
+	}
+	defer r.Discard()
+
+	before := mustReadDirNames(t, root)
+
+	badDoc := doc(model.VendorClaude, "aaa-uuid", "x")
+	badDoc.Session.Vendor = ".."
+	badDoc.Session.SessionID = "..:x"
+	if err := r.Put(ctx, badDoc); err == nil {
+		t.Fatalf("Put with a traversal vendor should have failed")
+	}
+
+	// Nothing should have landed outside the staging directory: no new
+	// entry directly under root...
+	after := mustReadDirNames(t, root)
+	if len(after) != len(before) {
+		t.Errorf("root directory gained entries after a rejected Put: before %v, after %v", before, after)
+	}
+	// ...and specifically no "x.json" sibling of staging, which is exactly
+	// what the unrejected traversal used to write.
+	stray := filepath.Join(root, "x.json")
+	if _, err := os.Stat(stray); !os.IsNotExist(err) {
+		t.Errorf("expected no file to land outside the staging dir at %s", stray)
+	}
+}
+
 // --- I3 ------------------------------------------------------------------
 
 func TestFsFailureMidWriteOnRealFilesystem(t *testing.T) {
@@ -169,6 +212,126 @@ func TestFsFailureMidWriteOnRealFilesystem(t *testing.T) {
 	}
 	if err := r2.Discard(); err != nil {
 		t.Fatalf("Discard: %v", err)
+	}
+
+	after := readFileMap(t, filepath.Join(root, "sessions"))
+	assertFileMapsEqual(t, after, before)
+}
+
+// --- I3a -----------------------------------------------------------------
+
+// TestCommitRenameFailureRollsBackOnRealFilesystem mirrors the unit tier's
+// TestCommitRenameFailureRollsBack on a real filesystem. failfs_test.go
+// says failFs carries no build tag specifically so both tiers can pin
+// Commit's rollback with it, but until now only OpenFileErr was ever
+// exercised on OsFs — RenameErr, and therefore this rollback path, the
+// highest-consequence failure mode in the package, was pinned only on
+// MemMapFs, whose rename-onto-existing-directory semantics are exactly the
+// ones known to differ from a real filesystem's.
+func TestCommitRenameFailureRollsBackOnRealFilesystem(t *testing.T) {
+	root := t.TempDir()
+	base := afero.NewOsFs()
+
+	plainStore := New(base, root, nil)
+	ctx := context.Background()
+	r1, err := plainStore.BeginRebuild(ctx)
+	if err != nil {
+		t.Fatalf("BeginRebuild: %v", err)
+	}
+	if err := r1.Put(ctx, doc(model.VendorClaude, "aaa-uuid", "gen1")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := r1.Commit(ctx); err != nil {
+		t.Fatalf("Commit gen1: %v", err)
+	}
+	before := readFileMap(t, filepath.Join(root, "sessions"))
+
+	liveDir := filepath.Join(root, sessionsDir)
+	failing := &failFs{
+		Fs: base,
+		RenameErr: func(oldname, newname string) error {
+			if strings.HasPrefix(filepath.Base(oldname), stagingPrefix) && newname == liveDir {
+				return errors.New("injected: rename staging -> sessions failed")
+			}
+			return nil
+		},
+	}
+	failStore := New(failing, root, nil)
+
+	r2, err := failStore.BeginRebuild(ctx)
+	if err != nil {
+		t.Fatalf("BeginRebuild gen2: %v", err)
+	}
+	defer r2.Discard()
+
+	if err := r2.Put(ctx, doc(model.VendorClaude, "bbb-uuid", "gen2")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := r2.Commit(ctx); err == nil {
+		t.Fatalf("Commit should have failed via the injected rename fault")
+	}
+
+	after := readFileMap(t, filepath.Join(root, "sessions"))
+	assertFileMapsEqual(t, after, before)
+
+	if err := r2.Discard(); err != nil {
+		t.Fatalf("Discard after failed Commit: %v", err)
+	}
+	for _, name := range mustReadDirNames(t, root) {
+		if strings.HasPrefix(name, stagingPrefix) {
+			t.Errorf("leftover staging directory %q after Discard", name)
+		}
+		if strings.HasPrefix(name, trashPrefix) {
+			t.Errorf("leftover trash directory %q: rollback should have restored it to sessions/", name)
+		}
+	}
+}
+
+// --- I3b -----------------------------------------------------------------
+
+// TestCommitAfterFailedPutRefusesToSwapOnRealFilesystem mirrors the B1 unit
+// test on a real filesystem: a failed Put must poison the rebuild so the
+// following Commit errors instead of replacing gen1 with a truncated gen2.
+func TestCommitAfterFailedPutRefusesToSwapOnRealFilesystem(t *testing.T) {
+	root := t.TempDir()
+	base := afero.NewOsFs()
+
+	plainStore := New(base, root, nil)
+	ctx := context.Background()
+	r1, err := plainStore.BeginRebuild(ctx)
+	if err != nil {
+		t.Fatalf("BeginRebuild: %v", err)
+	}
+	if err := r1.Put(ctx, doc(model.VendorClaude, "aaa-uuid", "gen1")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := r1.Commit(ctx); err != nil {
+		t.Fatalf("Commit gen1: %v", err)
+	}
+	before := readFileMap(t, filepath.Join(root, "sessions"))
+
+	failing := &failFs{
+		Fs: base,
+		OpenFileErr: func(name string, flag int, perm os.FileMode) error {
+			if strings.Contains(name, "bbb-uuid.json") {
+				return errors.New("injected: open failed")
+			}
+			return nil
+		},
+	}
+	failStore := New(failing, root, nil)
+
+	r2, err := failStore.BeginRebuild(ctx)
+	if err != nil {
+		t.Fatalf("BeginRebuild gen2: %v", err)
+	}
+	defer r2.Discard()
+
+	if err := r2.Put(ctx, doc(model.VendorClaude, "bbb-uuid", "gen2")); err == nil {
+		t.Fatalf("Put should have failed via the injected fault")
+	}
+	if err := r2.Commit(ctx); err == nil {
+		t.Fatalf("Commit after a failed Put should refuse to swap, got nil error")
 	}
 
 	after := readFileMap(t, filepath.Join(root, "sessions"))
