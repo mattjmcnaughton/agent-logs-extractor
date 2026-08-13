@@ -105,42 +105,15 @@ func run(args []string, stderr io.Writer) int {
 		return 1
 	}
 
-	dirty := false
-	for _, f := range written {
-		rel, _ := filepath.Rel(writeDst, f)
+	if len(written) == 0 {
+		fmt.Fprintf(stderr, "scrubfixture: no files found under -src %s; nothing written\n", srcAbs)
+		return 1
+	}
 
-		b, err := os.ReadFile(f)
-		if err != nil {
-			fmt.Fprintf(stderr, "scrubfixture: %v\n", err)
-			return 1
-		}
-
-		if !strings.HasSuffix(f, ".jsonl") {
-			// Non-.jsonl files (e.g. a subagent's .meta.json sidecar) are
-			// copied through verbatim rather than rewritten line-by-line,
-			// but every byte Tree writes still gets scanned before this
-			// tool exits 0.
-			fmt.Fprintf(stderr, "%s: copied verbatim\n", rel)
-			if findings := scrub.Findings(b); findings != nil {
-				dirty = true
-				fmt.Fprintf(stderr, "  findings remain: %v\n", findings)
-			}
-			continue
-		}
-
-		var lines []string
-		if len(b) > 0 {
-			lines = strings.Split(strings.TrimRight(string(b), "\n"), "\n")
-		}
-
-		fmt.Fprintf(stderr, "%s: %d lines\n", rel, len(lines))
-
-		for i, line := range lines {
-			if findings := scrub.Findings([]byte(line)); findings != nil {
-				dirty = true
-				fmt.Fprintf(stderr, "  line %d: findings remain: %v\n", i+1, findings)
-			}
-		}
+	dirty, err := verify(written, writeDst, stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "scrubfixture: %v\n", err)
+		return 1
 	}
 
 	if dryRun {
@@ -157,6 +130,41 @@ func run(args []string, stderr io.Writer) int {
 	}
 
 	return 0
+}
+
+// verify re-scans every file Tree wrote this run and reports whether any
+// sensitive content remains. It checks each file whole first: no
+// scrub.Findings detector pattern can match across a newline, so a clean
+// whole-file scan is exactly equivalent to a clean per-line scan, for
+// *.jsonl and copied-through non-.jsonl files alike -- the CLI does not
+// need to know which is which. Only a dirty file gets re-split into lines,
+// purely to attach a line number to the report.
+func verify(written []string, base string, stderr io.Writer) (dirty bool, err error) {
+	for _, f := range written {
+		rel, relErr := filepath.Rel(base, f)
+		if relErr != nil {
+			rel = f
+		}
+
+		b, err := os.ReadFile(f)
+		if err != nil {
+			return dirty, err
+		}
+
+		if scrub.Findings(b) == nil {
+			fmt.Fprintf(stderr, "%s: clean\n", rel)
+			continue
+		}
+
+		dirty = true
+		fmt.Fprintf(stderr, "%s: findings remain\n", rel)
+		for i, line := range strings.Split(string(b), "\n") {
+			if lineFindings := scrub.Findings([]byte(line)); lineFindings != nil {
+				fmt.Fprintf(stderr, "  line %d: findings remain: %v\n", i+1, lineFindings)
+			}
+		}
+	}
+	return dirty, nil
 }
 
 // guardDisjoint rejects -src/-dst pairs where either resolved path is a
@@ -185,25 +193,27 @@ func guardDisjoint(srcAbs, dstAbs string) error {
 // path itself (or a trailing portion of it) does not exist yet, and
 // rejoining the not-yet-existing suffix unresolved.
 func evalSymlinksBestEffort(path string) (string, error) {
-	resolved, err := filepath.EvalSymlinks(path)
-	if err == nil {
-		return resolved, nil
-	}
-	if !os.IsNotExist(err) {
-		return "", err
-	}
+	var suffix []string
+	cur := path
+	for {
+		resolved, err := filepath.EvalSymlinks(cur)
+		if err == nil {
+			return filepath.Join(append([]string{resolved}, suffix...)...), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
 
-	parent, base := filepath.Dir(path), filepath.Base(path)
-	if parent == path {
-		return "", err
+		parent, base := filepath.Dir(cur), filepath.Base(cur)
+		if parent == cur {
+			return "", err
+		}
+		suffix = append([]string{base}, suffix...)
+		cur = parent
 	}
-	resolvedParent, perr := evalSymlinksBestEffort(parent)
-	if perr != nil {
-		return "", perr
-	}
-	return filepath.Join(resolvedParent, base), nil
 }
 
 func within(child, parent string) bool {
-	return strings.HasPrefix(child+string(filepath.Separator), parent+string(filepath.Separator))
+	sep := string(filepath.Separator)
+	return strings.HasPrefix(child+sep, strings.TrimSuffix(parent, sep)+sep)
 }

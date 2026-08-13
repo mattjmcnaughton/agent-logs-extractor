@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 )
 
@@ -57,9 +56,7 @@ func renamePath(rel string, maps []Rule) string {
 	if len(maps) == 0 {
 		return rel
 	}
-	sorted := append([]Rule(nil), maps...)
-	sort.Slice(sorted, func(i, j int) bool { return len(sorted[i].Old) > len(sorted[j].Old) })
-	for _, r := range sorted {
+	for _, r := range sortedByOldDesc(maps) {
 		oldEnc := strings.ReplaceAll(r.Old, "/", "-")
 		newEnc := strings.ReplaceAll(r.New, "/", "-")
 		rel = strings.ReplaceAll(rel, oldEnc, newEnc)

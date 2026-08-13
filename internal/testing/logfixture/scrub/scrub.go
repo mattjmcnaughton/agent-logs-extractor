@@ -103,7 +103,9 @@ func Line(b []byte, o Options) ([]byte, error) {
 func Findings(b []byte) []string {
 	var out []string
 
-	out = append(out, matchAll(reToken, b)...)
+	for _, m := range reToken.FindAll(b, -1) {
+		out = append(out, string(m))
+	}
 	for _, m := range reEmail.FindAll(b, -1) {
 		if string(m) != placeholderEmail {
 			out = append(out, string(m))
@@ -150,10 +152,11 @@ func redactForeignSeg(re *regexp.Regexp, b []byte) []byte {
 // <uuid>/subagents/) are renamed to match the scrubbed cwd. Non-.jsonl
 // files are copied unchanged.
 //
-// Tree returns the absolute paths it actually wrote under dst, in the
-// order collected, so callers can verify exactly what changed on this run
-// without having to snapshot dst before and after (dst may already hold
-// unrelated, previously-written files that Tree never touches).
+// Tree returns the paths it wrote, rooted at dst, in the order collected;
+// on error, returns the paths written before the failure. This lets
+// callers verify exactly what changed on this run without having to
+// snapshot dst before and after (dst may already hold unrelated,
+// previously-written files that Tree never touches).
 func Tree(src, dst string, o Options) ([]string, error) {
 	if err := validate(o); err != nil {
 		return nil, err
@@ -193,14 +196,6 @@ func Tree(src, dst string, o Options) ([]string, error) {
 	return written, nil
 }
 
-func matchAll(re *regexp.Regexp, b []byte) []string {
-	var out []string
-	for _, m := range re.FindAll(b, -1) {
-		out = append(out, string(m))
-	}
-	return out
-}
-
 func decodeObject(b []byte) (map[string]json.RawMessage, string, error) {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(b, &m); err != nil {
@@ -228,13 +223,21 @@ func validate(o Options) error {
 	return nil
 }
 
+// sortedByOldDesc returns a copy of rules sorted by len(Old) descending, so
+// a more specific (longer) rule always wins over a shorter one it
+// contains. Shared by applyMaps (line-byte replacement) and renamePath
+// (output-path renaming in tree.go).
+func sortedByOldDesc(rules []Rule) []Rule {
+	sorted := append([]Rule(nil), rules...)
+	sort.Slice(sorted, func(i, j int) bool { return len(sorted[i].Old) > len(sorted[j].Old) })
+	return sorted
+}
+
 func applyMaps(b []byte, maps []Rule) []byte {
 	if len(maps) == 0 {
 		return b
 	}
-	sorted := append([]Rule(nil), maps...)
-	sort.Slice(sorted, func(i, j int) bool { return len(sorted[i].Old) > len(sorted[j].Old) })
-	for _, r := range sorted {
+	for _, r := range sortedByOldDesc(maps) {
 		b = bytes.ReplaceAll(b, []byte(r.Old), []byte(r.New))
 	}
 	return b

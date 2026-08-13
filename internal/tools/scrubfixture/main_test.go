@@ -8,6 +8,23 @@ import (
 	"testing"
 )
 
+// TestWithinHandlesRootParent pins within's contract for parent == "/":
+// building parent+"/" for a root parent used to yield "//", which
+// "/home/user/x/" does not have as a prefix, so within silently returned
+// false for every child of "/" -- the one parent value guardDisjoint can
+// plausibly see as a real -dst.
+func TestWithinHandlesRootParent(t *testing.T) {
+	if !within("/home/user/x", "/") {
+		t.Fatal("within(\"/home/user/x\", \"/\") = false, want true")
+	}
+	if within("/w/proj-out", "/w/proj") {
+		t.Fatal("within(\"/w/proj-out\", \"/w/proj\") = true, want false (sibling paths sharing a prefix)")
+	}
+	if !within("/w/proj/out", "/w/proj") {
+		t.Fatal("within(\"/w/proj/out\", \"/w/proj\") = false, want true")
+	}
+}
+
 func TestRunRejectsDstAncestorOfSrc(t *testing.T) {
 	work := t.TempDir()
 	projDir := filepath.Join(work, "projects", "-home-alice-proj")
@@ -84,8 +101,8 @@ func TestRunReVerifiesOnRerunIntoPopulatedDst(t *testing.T) {
 	if code := run([]string{"-src", srcDir, "-dst", dst}, &stderr1); code != 0 {
 		t.Fatalf("first run: expected exit 0, got %d; stderr:\n%s", code, stderr1.String())
 	}
-	if !strings.Contains(stderr1.String(), "1 lines") {
-		t.Fatalf("first run: expected the written file to be reported, stderr:\n%s", stderr1.String())
+	if !strings.Contains(stderr1.String(), "s1.jsonl: clean") {
+		t.Fatalf("first run: expected the written file to be reported clean, stderr:\n%s", stderr1.String())
 	}
 
 	// Rerun into the already-populated -dst with a -branch value that
@@ -95,11 +112,11 @@ func TestRunReVerifiesOnRerunIntoPopulatedDst(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("second run: expected non-zero exit for leftover finding, got 0; stderr:\n%s", stderr2.String())
 	}
-	if !strings.Contains(stderr2.String(), "1 lines") {
+	if !strings.Contains(stderr2.String(), "s1.jsonl: findings remain") {
 		t.Fatalf("second run: expected the rewritten file to be reported even though -dst was already populated, stderr:\n%s", stderr2.String())
 	}
-	if !strings.Contains(stderr2.String(), "findings remain") {
-		t.Fatalf("second run: expected findings to be reported, stderr:\n%s", stderr2.String())
+	if !strings.Contains(stderr2.String(), "line 1: findings remain") {
+		t.Fatalf("second run: expected a line-numbered finding to be reported, stderr:\n%s", stderr2.String())
 	}
 }
 
@@ -146,6 +163,72 @@ func TestRunDryRunLeavesRealDstUntouched(t *testing.T) {
 	}
 	if _, err := os.Stat(dst); !os.IsNotExist(err) {
 		t.Fatalf("expected -dst to remain nonexistent after -dry-run, stat err = %v", err)
+	}
+}
+
+// TestRunRejectsEmptySrc reproduces the degenerate-command-substitution
+// case from the fixture README's recipes: -src resolves to a directory
+// with nothing under it (e.g. `$(ls ...)` came back empty), scrub.Tree
+// legitimately writes zero files, and the tool must fail loudly rather
+// than exit 0 in silence -- an explicit invocation that scrubs nothing is
+// operator error, not success.
+func TestRunRejectsEmptySrc(t *testing.T) {
+	work := t.TempDir()
+	srcDir := filepath.Join(work, "empty-src")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(work, "dst")
+
+	var stderr bytes.Buffer
+	code := run([]string{"-src", srcDir, "-dst", dst}, &stderr)
+	if code != 1 {
+		t.Fatalf("expected exit 1 for -src yielding no files, got %d; stderr:\n%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), srcDir) {
+		t.Fatalf("expected the -src path to be named in the error, stderr:\n%s", stderr.String())
+	}
+	if _, err := os.Stat(dst); !os.IsNotExist(err) {
+		t.Fatalf("expected -dst to remain uncreated when nothing was written, stat err = %v", err)
+	}
+}
+
+// TestRunReportsCorrectLineNumberForDirtyMultilineFile pins the
+// whole-file-first verification strategy: Findings is checked once over
+// the whole file, and only a dirty file gets re-split into lines purely to
+// attach a line number to the report. Only the middle line carries a
+// "gitBranch" key, so -branch's leftover email finding lands on line 2
+// specifically -- this pins that the reported line number is the finding's
+// real location, not just "line 1" (which the pre-existing single-line
+// tests can't distinguish from an off-by-one bug).
+func TestRunReportsCorrectLineNumberForDirtyMultilineFile(t *testing.T) {
+	work := t.TempDir()
+	srcDir := filepath.Join(work, "src", "-home-user-proj")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := `{"type":"user","cwd":"/home/user/proj"}` + "\n" +
+		`{"type":"assistant","cwd":"/home/user/proj","gitBranch":"feat/x"}` + "\n" +
+		`{"type":"user","cwd":"/home/user/proj"}` + "\n"
+	if err := os.WriteFile(filepath.Join(srcDir, "s1.jsonl"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := filepath.Join(work, "dst")
+
+	var stderr bytes.Buffer
+	code := run([]string{"-src", srcDir, "-dst", dst, "-branch", "leak@evil.example.org"}, &stderr)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for leftover finding, got 0; stderr:\n%s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "s1.jsonl: findings remain") {
+		t.Fatalf("expected the dirty file to be reported, stderr:\n%s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "line 2: findings remain") {
+		t.Fatalf("expected the finding to be attributed to line 2, stderr:\n%s", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "line 1: findings remain") || strings.Contains(stderr.String(), "line 3: findings remain") {
+		t.Fatalf("expected only line 2 to be reported dirty, stderr:\n%s", stderr.String())
 	}
 }
 
