@@ -1,33 +1,31 @@
 package claudesource
 
 import (
-	"encoding/json"
 	"path"
 	"path/filepath"
-	"slices"
 	"strings"
+	"time"
 
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/model"
 )
 
 // skipTally counts skipped records by reason. It shares model.SkipCounts's
 // underlying map type so counts() is a plain conversion, never a copy loop.
+// Every construction site uses make(skipTally) rather than a nil zero
+// value, so add/merge can take value receivers: a map header copies by
+// value but still points at the same underlying data, so mutating through
+// it needs no pointer back to the caller's variable — only a nil map would.
 type skipTally map[model.SkipReason]int
 
-func (t *skipTally) add(r model.SkipReason) {
-	if *t == nil {
-		*t = make(skipTally)
-	}
-	(*t)[r]++
+func (t skipTally) add(r model.SkipReason) {
+	t[r]++
 }
 
-// merge adds every count in other into t.
-func (t *skipTally) merge(other skipTally) {
+// merge adds every count in other into t. other may be nil (an empty range
+// is a no-op).
+func (t skipTally) merge(other skipTally) {
 	for r, n := range other {
-		if *t == nil {
-			*t = make(skipTally)
-		}
-		(*t)[r] += n
+		t[r] += n
 	}
 }
 
@@ -53,11 +51,13 @@ type builder struct {
 
 // normalize folds a merge-ordered, already-chronological record stream
 // (parent transcript plus any flattened subagent transcripts) into one
-// SessionDoc. links resolves each subagent transcript's root message back to
-// the parent's spawning Agent tool call (§C.5); sourcePath backstops the
-// session id when no record supplies one.
-func normalize(recs []rawRecord, sourcePath string, links []sidechainLink) (model.SessionDoc, skipTally) {
-	cwd, branch, version, sessionID := sessionMeta(recs)
+// SessionDoc. parentRecs is the same records restricted to the parent
+// transcript alone, in file order — sessionMeta's preferred source. links
+// maps a subagent transcript's fileRank to its resolved parent tool_use id
+// (§C.5; "" or absent means unresolved). sourcePath backstops the session
+// id when no record supplies one.
+func normalize(recs, parentRecs []rawRecord, sourcePath string, links map[int]string) (model.SessionDoc, skipTally) {
+	cwd, branch, version, sessionID := sessionMeta(parentRecs, recs)
 	if sessionID == "" {
 		sessionID = strings.TrimSuffix(filepath.Base(sourcePath), ".jsonl")
 	}
@@ -65,6 +65,7 @@ func normalize(recs []rawRecord, sourcePath string, links []sidechainLink) (mode
 	b := &builder{
 		byToolUse: make(map[string]int),
 		byUUID:    make(map[string]int),
+		skips:     make(skipTally),
 	}
 	b.doc.Session = model.Session{
 		SessionID:     nsID(sessionID),
@@ -76,39 +77,44 @@ func normalize(recs []rawRecord, sourcePath string, links []sidechainLink) (mode
 		SourcePath:    sourcePath,
 	}
 
-	linkByRank := make(map[int]sidechainLink, len(links))
-	for _, l := range links {
-		linkByRank[l.fileRank] = l
-	}
 	rootSeen := make(map[int]bool)
-
 	for _, r := range recs {
-		b.addRecord(r, linkByRank, rootSeen)
+		b.addRecord(r, links, rootSeen)
 	}
 
-	if len(b.doc.Messages) > 0 {
-		start := b.doc.Messages[0].CreatedAt
-		end := start
-		for _, m := range b.doc.Messages {
-			if m.CreatedAt.Before(start) {
-				start = m.CreatedAt
-			}
-			if m.CreatedAt.After(end) {
-				end = m.CreatedAt
-			}
+	var start, end time.Time
+	for _, m := range b.doc.Messages {
+		// A missing/unparseable timestamp leaves CreatedAt at its zero
+		// value (parseTimestamp's contract); folding that into start/end
+		// would drag started_at to 0001-01-01 the moment any one message
+		// in the session lacks a timestamp. Skip zero values entirely: if
+		// every message is zero-valued, start/end stay zero too, same as
+		// an empty session.
+		if m.CreatedAt.IsZero() {
+			continue
 		}
-		b.doc.Session.StartedAt = start
-		b.doc.Session.EndedAt = end
+		if start.IsZero() || m.CreatedAt.Before(start) {
+			start = m.CreatedAt
+		}
+		if end.IsZero() || m.CreatedAt.After(end) {
+			end = m.CreatedAt
+		}
 	}
+	b.doc.Session.StartedAt = start
+	b.doc.Session.EndedAt = end
 
 	return b.doc, b.skips
 }
 
 // addRecord routes one record: bookkeeping and unknown types are counted
-// and dropped; a record carrying tool_result blocks is consumed to fill in
-// existing tool_calls rows (never a message of its own); everything else is
-// a candidate messages row, followed by any tool_use blocks it carries.
-func (b *builder) addRecord(r rawRecord, links map[int]sidechainLink, rootSeen map[int]bool) {
+// and dropped. A record's message content (if any) is decoded exactly once
+// here and the materialized blocks are threaded through every subsequent
+// step, rather than each of addMessage/addToolUses/applyToolResults
+// re-decoding the same bytes. Content carrying tool_result blocks is
+// consumed to fill in existing tool_calls rows (never a message of its
+// own); everything else is a candidate messages row, followed by any
+// tool_use blocks it carries.
+func (b *builder) addRecord(r rawRecord, links map[int]string, rootSeen map[int]bool) {
 	switch classify(r.rec.Type) {
 	case kindBookkeeping:
 		b.skips.add(model.SkipBookkeeping)
@@ -118,11 +124,18 @@ func (b *builder) addRecord(r rawRecord, links map[int]sidechainLink, rootSeen m
 		return
 	}
 
+	var blocks []block
+	var isString bool
+	var str string
+	if r.rec.Message != nil {
+		blocks, isString, str = blocksOf(r.rec.Message.Content)
+	}
+
 	// A record mixing tool_result and text blocks is not observed in any
 	// fixture; if it ever occurs, treat it as a tool-result carrier (join
 	// the results, drop the text) rather than double-counting it.
-	if hasToolResultBlocks(r) {
-		b.applyToolResults(r)
+	if !isString && containsToolResult(blocks) {
+		b.applyToolResults(blocks)
 		return
 	}
 
@@ -132,16 +145,16 @@ func (b *builder) addRecord(r rawRecord, links map[int]sidechainLink, rootSeen m
 	isRoot := r.fileRank >= 1 && !rootSeen[r.fileRank] &&
 		(r.rec.ParentUUID == nil || *r.rec.ParentUUID == "")
 
-	msgID, ok := b.addMessage(r)
+	msgID, ok := b.addMessage(r, blocks, isString, str)
 	if !ok {
 		return
 	}
 
 	if isRoot {
 		rootSeen[r.fileRank] = true
-		if link, exists := links[r.fileRank]; exists && link.toolUseID != "" {
-			if idx, found := b.byToolUse[nsID(link.toolUseID)]; found {
-				b.doc.Messages[len(b.doc.Messages)-1].ParentMessageID = b.doc.ToolCalls[idx].MessageID
+		if toolUseID := links[r.fileRank]; toolUseID != "" {
+			if idx, found := b.byToolUse[nsID(toolUseID)]; found {
+				b.doc.Messages[b.byUUID[msgID]].ParentMessageID = b.doc.ToolCalls[idx].MessageID
 			}
 		}
 		// Link unresolved, or the resolved tool_use id was never seen
@@ -150,21 +163,31 @@ func (b *builder) addRecord(r rawRecord, links map[int]sidechainLink, rootSeen m
 		// ParentMessageID empty rather than panicking).
 	}
 
-	b.addToolUses(r, msgID)
+	b.addToolUses(r, msgID, blocks, isString)
 }
 
 // addMessage appends a messages row for r, or reports ok=false if the
-// record cannot produce one (no uuid, or no text source at all).
-func (b *builder) addMessage(r rawRecord) (msgID string, ok bool) {
+// record cannot produce one: no uuid, no text source at all, or a uuid
+// that collides with a message already added this session (message_id is
+// the messages primary key; the first row wins). blocks/isString/str are
+// r.rec.Message's content, already decoded by addRecord — zero-valued when
+// r.rec.Message is nil.
+func (b *builder) addMessage(r rawRecord, blocks []block, isString bool, str string) (msgID string, ok bool) {
 	if r.rec.UUID == "" {
 		b.skips.add(SkipMissingUUID)
+		return "", false
+	}
+
+	msgID = nsID(r.rec.UUID)
+	if _, dup := b.byUUID[msgID]; dup {
+		b.skips.add(SkipDuplicateMessageID)
 		return "", false
 	}
 
 	var text, modelName string
 	switch {
 	case r.rec.Message != nil:
-		text = textOf(r.rec.Message.Content)
+		text = joinText(blocks, isString, str)
 		if r.rec.Type == "assistant" {
 			modelName = r.rec.Message.Model
 		}
@@ -178,7 +201,6 @@ func (b *builder) addMessage(r rawRecord) (msgID string, ok bool) {
 		return "", false
 	}
 
-	msgID = nsID(r.rec.UUID)
 	var parentID string
 	if r.rec.ParentUUID != nil && *r.rec.ParentUUID != "" {
 		// Not validated against byUUID: a dangling parentUuid is preserved
@@ -204,12 +226,13 @@ func (b *builder) addMessage(r rawRecord) (msgID string, ok bool) {
 }
 
 // addToolUses appends one tool_calls row per tool_use block in r, in block
-// order, attributed to the message msgID that carries them.
-func (b *builder) addToolUses(r rawRecord, msgID string) {
-	if r.rec.Message == nil {
-		return
-	}
-	blocks, isString, _ := blocksOf(r.rec.Message.Content)
+// order, attributed to the message msgID that carries them. A block with
+// no id is dropped (SkipMissingToolUseID): indexing it under the literal
+// key "claude:" would fabricate a join to any tool_result that is itself
+// missing a tool_use_id. A block whose id collides with a tool_use already
+// added this session is dropped too (SkipDuplicateToolUseID): tool_call_id
+// is the tool_calls primary key, and only the first row wins.
+func (b *builder) addToolUses(r rawRecord, msgID string, blocks []block, isString bool) {
 	if isString {
 		return
 	}
@@ -217,8 +240,17 @@ func (b *builder) addToolUses(r rawRecord, msgID string) {
 		if blk.Type != "tool_use" {
 			continue
 		}
+		if blk.ID == "" {
+			b.skips.add(SkipMissingToolUseID)
+			continue
+		}
+		toolCallID := nsID(blk.ID)
+		if _, dup := b.byToolUse[toolCallID]; dup {
+			b.skips.add(SkipDuplicateToolUseID)
+			continue
+		}
 		tc := model.ToolCall{
-			ToolCallID: nsID(blk.ID),
+			ToolCallID: toolCallID,
 			SessionID:  b.doc.Session.SessionID,
 			MessageID:  msgID,
 			Seq:        b.nextTCSeq,
@@ -229,25 +261,22 @@ func (b *builder) addToolUses(r rawRecord, msgID string) {
 		}
 		b.nextTCSeq++
 		b.doc.ToolCalls = append(b.doc.ToolCalls, tc)
-		b.byToolUse[nsID(blk.ID)] = len(b.doc.ToolCalls) - 1
+		b.byToolUse[toolCallID] = len(b.doc.ToolCalls) - 1
 	}
 }
 
-// applyToolResults joins each tool_result block in r back to its tool_use
-// row by tool_use_id, filling in Status and Output. A block whose
-// tool_use_id has no earlier matching tool_use is counted as
-// SkipOrphanToolResult and dropped: synthesizing a row would need a
-// message_id FK this adapter does not have.
-func (b *builder) applyToolResults(r rawRecord) {
-	if r.rec.Message == nil {
-		return
-	}
-	blocks, isString, _ := blocksOf(r.rec.Message.Content)
-	if isString {
-		return
-	}
+// applyToolResults joins each tool_result block in blocks back to its
+// tool_use row by tool_use_id, filling in Status and Output. A block with
+// no tool_use_id, or whose tool_use_id has no earlier matching tool_use, is
+// counted as SkipOrphanToolResult and dropped: synthesizing a row would
+// need a message_id FK this adapter does not have.
+func (b *builder) applyToolResults(blocks []block) {
 	for _, blk := range blocks {
 		if blk.Type != "tool_result" {
+			continue
+		}
+		if blk.ToolUseID == "" {
+			b.skips.add(SkipOrphanToolResult)
 			continue
 		}
 		idx, found := b.byToolUse[nsID(blk.ToolUseID)]
@@ -260,21 +289,13 @@ func (b *builder) applyToolResults(r rawRecord) {
 			status = model.StatusError
 		}
 		b.doc.ToolCalls[idx].Status = status
-		b.doc.ToolCalls[idx].Output = resultOutput(blk.Content)
+		b.doc.ToolCalls[idx].Output = textOf(blk.Content)
 	}
 }
 
-// hasToolResultBlocks reports whether r's message content contains at least
-// one type=="tool_result" block. A record with a string message.content
-// never carries blocks at all.
-func hasToolResultBlocks(r rawRecord) bool {
-	if r.rec.Message == nil {
-		return false
-	}
-	blocks, isString, _ := blocksOf(r.rec.Message.Content)
-	if isString {
-		return false
-	}
+// containsToolResult reports whether blocks holds at least one
+// type=="tool_result" block.
+func containsToolResult(blocks []block) bool {
 	for _, blk := range blocks {
 		if blk.Type == "tool_result" {
 			return true
@@ -283,46 +304,41 @@ func hasToolResultBlocks(r rawRecord) bool {
 	return false
 }
 
-// resultOutput extracts a tool_result block's output text. Same rule as
-// textOf: a string content is returned as-is; a content-block array joins
-// the .text of every type=="text" block with "\n"; anything else (null,
-// absent, an unrecognized shape) is "".
-func resultOutput(c json.RawMessage) string {
-	return textOf(c)
-}
-
-// sessionMeta scans recs for the first non-empty cwd / gitBranch / version /
-// sessionId, always preferring the parent transcript (fileRank 0) over any
-// subagent transcript, regardless of chronological order — a subagent
-// record can sort before some parent records (§C.4), but session-level
-// metadata should still come from the parent file first. Every committed
-// fixture opens with a bookkeeping queue-operation record carrying none of
-// these fields, so "the first record" would yield nothing; this is why the
-// rule is per-field first-non-empty rather than "read the first record".
-func sessionMeta(recs []rawRecord) (cwd, branch, version, sessionID string) {
-	ordered := slices.Clone(recs)
-	slices.SortStableFunc(ordered, func(a, b rawRecord) int {
-		if a.fileRank != b.fileRank {
-			return a.fileRank - b.fileRank
+// sessionMeta scans parentRecs (already in file order — Parse builds it
+// that way, one readRecords call over a single file) for the first
+// non-empty cwd / gitBranch / version / sessionId, falling back to allRecs
+// (the full chronological merge, which may include subagent-only
+// metadata) only for a field still empty after scanning the parent alone.
+// This prefers the parent transcript over any subagent transcript
+// regardless of chronological order — a subagent record can sort before
+// some parent records (§C.4), but session-level metadata should still come
+// from the parent file first. Every committed fixture opens with a
+// bookkeeping queue-operation record carrying none of these fields, so
+// "the first record" would yield nothing; this is why the rule is
+// per-field first-non-empty rather than "read the first record".
+func sessionMeta(parentRecs, allRecs []rawRecord) (cwd, branch, version, sessionID string) {
+	scan := func(recs []rawRecord) {
+		for _, r := range recs {
+			if cwd == "" && r.rec.CWD != "" {
+				cwd = r.rec.CWD
+			}
+			if branch == "" && r.rec.GitBranch != "" {
+				branch = r.rec.GitBranch
+			}
+			if version == "" && r.rec.Version != "" {
+				version = r.rec.Version
+			}
+			if sessionID == "" && r.rec.SessionID != "" {
+				sessionID = r.rec.SessionID
+			}
+			if cwd != "" && branch != "" && version != "" && sessionID != "" {
+				return
+			}
 		}
-		return a.lineIndex - b.lineIndex
-	})
-	for _, r := range ordered {
-		if cwd == "" && r.rec.CWD != "" {
-			cwd = r.rec.CWD
-		}
-		if branch == "" && r.rec.GitBranch != "" {
-			branch = r.rec.GitBranch
-		}
-		if version == "" && r.rec.Version != "" {
-			version = r.rec.Version
-		}
-		if sessionID == "" && r.rec.SessionID != "" {
-			sessionID = r.rec.SessionID
-		}
-		if cwd != "" && branch != "" && version != "" && sessionID != "" {
-			break
-		}
+	}
+	scan(parentRecs)
+	if cwd == "" || branch == "" || version == "" || sessionID == "" {
+		scan(allRecs)
 	}
 	return cwd, branch, version, sessionID
 }

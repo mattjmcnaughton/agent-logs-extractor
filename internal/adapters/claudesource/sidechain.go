@@ -10,13 +10,6 @@ import (
 	"strings"
 )
 
-// sidechainLink resolves one subagent transcript's flattened root message
-// back to the parent's spawning Agent tool call.
-type sidechainLink struct {
-	fileRank  int    // which transcript this link describes
-	toolUseID string // parent's Agent tool_use id ("" if unresolved)
-}
-
 // subagentPaths returns the *.jsonl files under <path-without-.jsonl>/subagents/,
 // sorted. A missing subagents directory is not an error — most sessions
 // never spawn one — so it reports (nil, nil).
