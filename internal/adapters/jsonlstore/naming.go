@@ -14,10 +14,12 @@ import (
 )
 
 // ErrInvalidSessionDoc is returned by Put for a doc whose session cannot be
-// named on disk: an empty session id, an empty vendor, or a session id that
-// is not vendor-namespaced as "<vendor>:<rest>" with a non-empty rest. It
-// wraps ports.ErrInvalidSessionDoc so callers can errors.Is against either
-// the adapter-specific or the port-level sentinel.
+// named on disk: anything ports.ValidSessionDoc reports as invalid — an
+// empty session id, an empty vendor, a session id that is not
+// vendor-namespaced as "<vendor>:<rest>" with a non-empty rest, or a vendor
+// that is itself a path-traversal element ("." or ".."). It wraps
+// ports.ErrInvalidSessionDoc so callers can errors.Is against either the
+// adapter-specific or the port-level sentinel.
 var ErrInvalidSessionDoc = fmt.Errorf("jsonlstore: session doc has no usable session id: %w", ports.ErrInvalidSessionDoc)
 
 // maxStem caps the escaped stem; beyond it the stem becomes the first 160
@@ -29,31 +31,27 @@ const maxStem = 200
 // The session id must be exactly "<vendor>:<rest>" with rest non-empty;
 // anything else is ErrInvalidSessionDoc (TDD decision, #7 plan §D2).
 func relPath(sess model.Session) (string, error) {
+	// ports.ValidSessionDoc is the single source of truth for this
+	// rejection set (empty vendor/id, non-namespaced id, bare-prefix id,
+	// traversal vendor) — see its doc for why this must not be
+	// reimplemented here.
+	if !ports.ValidSessionDoc(sess) {
+		return "", fmt.Errorf("%w: vendor=%q session_id=%q", ErrInvalidSessionDoc, sess.Vendor, sess.SessionID)
+	}
+
 	vendor := string(sess.Vendor)
 	id := sess.SessionID
-	if vendor == "" || id == "" {
-		return "", fmt.Errorf("%w: vendor=%q session_id=%q", ErrInvalidSessionDoc, vendor, id)
-	}
-
-	prefix := vendor + ":"
-	if !strings.HasPrefix(id, prefix) {
-		return "", fmt.Errorf("%w: session_id %q is not namespaced as %q", ErrInvalidSessionDoc, id, prefix)
-	}
-
-	rest := strings.TrimPrefix(id, prefix)
-	if rest == "" {
-		return "", fmt.Errorf("%w: session_id %q has no id after the vendor prefix", ErrInvalidSessionDoc, id)
-	}
+	rest := strings.TrimPrefix(id, vendor+":")
 
 	vendorElem := escapeElement(vendor)
 	// '.' is unreserved, so escapeElement passes a vendor of "." or ".."
-	// through unchanged, and relPath uses it as a directory element:
-	// unrejected, that turns Put into a traversal write outside the
-	// staging tree (e.g. Vendor=".." lands the file as a sibling of
-	// staging, inside the store root but outside "<staging>/"). Nothing in
-	// ports.CanonicalStore constrains Vendor — it happens to be a source
-	// adapter constant today — so this rejects the escaped form directly
-	// rather than relying on that being true forever.
+	// through unchanged. ports.ValidSessionDoc already rejects those raw
+	// vendor values above, and no *other* input can escape to "." or ".."
+	// (escaping any byte outside [A-Za-z0-9._-] introduces a literal '%',
+	// so the only vendors whose escaped form equals "." or ".." are "."
+	// and ".." themselves) — but this checks the escaped form directly
+	// anyway as defense-in-depth, rather than relying on that equivalence
+	// staying true forever.
 	if vendorElem == "." || vendorElem == ".." {
 		return "", fmt.Errorf("%w: vendor %q escapes to the traversal element %q", ErrInvalidSessionDoc, vendor, vendorElem)
 	}
