@@ -81,10 +81,17 @@ Provenance subsection below.
   the link from the transcripts. `scrub.Tree` copies it through verbatim
   (it isn't line-oriented JSONL, so it is not rewritten by `Line`), and
   both `just scrub-fixture` and `TestFixturesAreScrubbed` still
-  findings-check it as a whole file. Whether the ticket #6 `claudesource`
-  adapter reads this sidecar or derives the link from the transcripts
-  alone is left open for that ticket; see
-  `docs/technical/tdd-mvp.md`'s open question 1.
+  findings-check it as a whole file. **Consumed, not just findings-checked:**
+  `internal/adapters/claudesource` (#6) reads this sidecar as the primary
+  sidechain-parent link, falling back to the `toolUseResult.agentId` join
+  against the transcripts alone only when it is missing, unreadable, or
+  malformed (`docs/technical/tdd-mvp.md`'s open question 1, now settled and
+  closed). This means **regenerating the sidechain fixture requires
+  regenerating `internal/adapters/claudesource`'s golden files too**
+  (`go test ./internal/adapters/claudesource -run TestGoldenParse -update`,
+  then review the diff — see that package's test file for the anti-rot
+  mechanisms guarding a blind `-update`), and the sidecar itself must keep
+  surviving future regenerations of this fixture.
   See `TestSidechainFixtureExercisesSubagents` in
   `logfixture_test.go` for the pinned invariants, and
   `docs/technical/tdd-mvp.md`'s Claude mapping section / open question 1
@@ -224,6 +231,20 @@ tool-driven regeneration path for it to eventually migrate to.
   the two fixtures below it.
 
 ## Regenerating a fixture
+
+**Any Claude fixture regeneration requires regenerating
+`internal/adapters/claudesource`'s golden files too.** Session/record uuids,
+`toolu_` ids, and timestamps all change on a real regeneration, so every
+golden file for the touched fixture fails as soon as the fixture is
+committed. Run
+`go test ./internal/adapters/claudesource -run TestGoldenParse -update`,
+then **review the resulting `testdata/*.golden.json` diff as the drift
+report**: id/timestamp churn is expected and fine, but a changed message or
+tool-call count, a new record type surfacing as `unknown_record_type`, or a
+changed status is a real behavior change to stop and investigate, not to
+wave through with `-update`. `TestFixtureShape` in that package pins the
+exact counts precisely so a change like that fails loudly on its own,
+independent of the golden diff.
 
 Use `just scrub-fixture -src <real session file-or-dir> -dst <fixture dir> [-map OLD=NEW ...] [-branch NAME] [-dry-run] [-force]`
 (a thin CLI over `internal/testing/logfixture/scrub`, see
