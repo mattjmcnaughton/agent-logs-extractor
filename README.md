@@ -39,9 +39,14 @@ agent-logs-extractor sync --vendor claude
 agent-logs-extractor sync --claude-path /backups/dotclaude
 ```
 
-- A malformed line or an unrecognized record type is logged and skipped — one bad record never fails the run. A summary reports how much was ingested and how much was skipped.
+```
+claude: 3 sessions, 15 messages, 4 tool calls, 23 records skipped
+```
+
+- A malformed line or an unrecognized record type is logged and skipped — one bad record never fails the run, and a session file that can't even be read (a permissions error, say) is likewise counted, not fatal. The one-line-per-vendor summary above reports how much was ingested and how much was skipped; the full skip breakdown by reason is available at `--log-level debug`.
 - A missing vendor directory is fine: that vendor simply contributes zero sessions.
 - `--vendor claude|codex` restricts the run to one source; `--claude-path` / `--codex-path` override the default log roots. There is no config file.
+- Codex support (`codexsource`) hasn't landed yet: a bare `sync` currently syncs Claude only, and `sync --vendor codex` errors, naming what's actually available. `--codex-path` is accepted and stored but not yet consulted.
 
 ### `export`
 

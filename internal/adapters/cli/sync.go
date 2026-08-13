@@ -3,6 +3,8 @@ package cli
 import (
 	"cmp"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -20,7 +22,7 @@ func newSyncCmd(deps Deps) *cobra.Command {
 		Args:  cobra.NoArgs,
 		Short: "Parse vendor logs into the canonical store",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			vendors, err := selectedVendors(vendor)
+			vendors, err := selectedVendors(vendor, deps.Sync.Vendors())
 			if err != nil {
 				return err
 			}
@@ -31,8 +33,11 @@ func newSyncCmd(deps Deps) *cobra.Command {
 			}
 			req := syncRequest(vendors, overrides, deps.DefaultRoots)
 
-			// TODO(#8): format the ingest summary.
-			_, err = deps.Sync.Run(cmd.Context(), req)
+			summary, err := deps.Sync.Run(cmd.Context(), req)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprint(cmd.OutOrStdout(), formatSyncSummary(summary))
 			return err
 		},
 	}
@@ -45,15 +50,34 @@ func newSyncCmd(deps Deps) *cobra.Command {
 }
 
 // selectedVendors resolves the --vendor flag to the set of vendors to
-// sync: both when empty, or the single named vendor.
-func selectedVendors(vendor string) ([]model.Vendor, error) {
+// sync. An empty flag fans out to every vendor in available (the deferred-
+// Codex landmine: available is Sync.Vendors(), so a bare `sync` ingests
+// whatever this build actually has a source for, rather than hardcoding
+// both vendor names and letting Run fail on the missing one). A vendor
+// named explicitly must be in available, or the error says so, naming what
+// is available; an unrecognized vendor name is always an error, regardless
+// of availability.
+func selectedVendors(vendor string, available []model.Vendor) ([]model.Vendor, error) {
+	have := func(v model.Vendor) bool { return slices.Contains(available, v) }
+
 	switch vendor {
 	case "":
-		return []model.Vendor{model.VendorClaude, model.VendorCodex}, nil
-	case string(model.VendorClaude):
-		return []model.Vendor{model.VendorClaude}, nil
-	case string(model.VendorCodex):
-		return []model.Vendor{model.VendorCodex}, nil
+		var out []model.Vendor
+		for _, v := range []model.Vendor{model.VendorClaude, model.VendorCodex} {
+			if have(v) {
+				out = append(out, v)
+			}
+		}
+		if len(out) == 0 {
+			return nil, fmt.Errorf("no vendor sources are available in this build")
+		}
+		return out, nil
+	case string(model.VendorClaude), string(model.VendorCodex):
+		v := model.Vendor(vendor)
+		if !have(v) {
+			return nil, fmt.Errorf("vendor %q is not supported by this build yet; available: %v", vendor, available)
+		}
+		return []model.Vendor{v}, nil
 	default:
 		return nil, fmt.Errorf("unknown vendor %q: accepted values are %q, %q", vendor, model.VendorClaude, model.VendorCodex)
 	}
@@ -73,4 +97,40 @@ func syncRequest(vendors []model.Vendor, overrides, defaults map[model.Vendor]st
 		req.Sources = append(req.Sources, sync.SourceRequest{Vendor: v, Root: root})
 	}
 	return req
+}
+
+// formatSyncSummary renders one line per vendor, in the order Run reported
+// them (request order): "<vendor>: N sessions, N messages, N tool calls, N
+// records skipped", with ", N file(s) unreadable" appended only when
+// FilesUnreadable is non-zero, so the common case stays a clean four-field
+// line. An empty Summary (no vendors — Run only returns one for a Request
+// with at least one source) formats to "". The full by-reason skip
+// breakdown is not printed here; the use case already logs it at debug
+// level (sync.Run's doc).
+func formatSyncSummary(s sync.Summary) string {
+	var b strings.Builder
+	for _, v := range s.Vendors {
+		fmt.Fprintf(&b, "%s: %s, %s, %s, %s skipped",
+			v.Vendor,
+			countNoun(v.Sessions, "session"),
+			countNoun(v.Messages, "message"),
+			countNoun(v.ToolCalls, "tool call"),
+			countNoun(v.TotalSkipped(), "record"),
+		)
+		if v.FilesUnreadable > 0 {
+			fmt.Fprintf(&b, ", %s unreadable", countNoun(v.FilesUnreadable, "file"))
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// countNoun formats n alongside noun, pluralized with a trailing "s"
+// unless n is exactly 1. Every noun this package passes in pluralizes
+// regularly, so no irregular-plural table is needed.
+func countNoun(n int, noun string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, noun)
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
