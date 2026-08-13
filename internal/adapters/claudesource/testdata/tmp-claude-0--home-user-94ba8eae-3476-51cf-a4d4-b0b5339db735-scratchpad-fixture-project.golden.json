@@ -1,0 +1,297 @@
+{
+  "stats": {
+    "Skipped": {
+      "bookkeeping_record": 7
+    }
+  },
+  "doc": {
+    "session": {
+      "session_id": "claude:94ba8eae-3476-51cf-a4d4-b0b5339db735",
+      "vendor": "claude",
+      "project_path": "/tmp/claude-0/-home-user/94ba8eae-3476-51cf-a4d4-b0b5339db735/scratchpad/fixture-project",
+      "project_name": "fixture-project",
+      "started_at": "2026-08-12T18:19:09.55Z",
+      "ended_at": "2026-08-12T18:19:12.755Z",
+      "git_branch": "HEAD",
+      "vendor_version": "2.1.228",
+      "source_path": "claude/projects/-tmp-claude-0--home-user-94ba8eae-3476-51cf-a4d4-b0b5339db735-scratchpad-fixture-project/94ba8eae-3476-51cf-a4d4-b0b5339db735.jsonl"
+    },
+    "messages": [
+      {
+        "message_id": "claude:8bcefd15-548b-4a95-8247-93dc17d1922c",
+        "session_id": "claude:94ba8eae-3476-51cf-a4d4-b0b5339db735",
+        "seq": 0,
+        "role": "user",
+        "created_at": "2026-08-12T18:19:09.55Z",
+        "text": "Use the Bash tool to run: echo hello fixture. Then reply with exactly: done",
+        "raw": {
+          "parentUuid": null,
+          "isSidechain": false,
+          "promptId": "37c2612a-53b6-45f8-8d08-a1d453d055b4",
+          "type": "user",
+          "message": {
+            "role": "user",
+            "content": "Use the Bash tool to run: echo hello fixture. Then reply with exactly: done"
+          },
+          "uuid": "8bcefd15-548b-4a95-8247-93dc17d1922c",
+          "timestamp": "2026-08-12T18:19:09.550Z",
+          "permissionMode": "default",
+          "promptSource": "sdk",
+          "userType": "external",
+          "entrypoint": "remote_desktop",
+          "cwd": "/tmp/claude-0/-home-user/94ba8eae-3476-51cf-a4d4-b0b5339db735/scratchpad/fixture-project",
+          "sessionId": "94ba8eae-3476-51cf-a4d4-b0b5339db735",
+          "version": "2.1.228",
+          "gitBranch": "HEAD"
+        }
+      },
+      {
+        "message_id": "claude:44ef2806-1d53-4882-8ec2-dbf0ef68621c",
+        "session_id": "claude:94ba8eae-3476-51cf-a4d4-b0b5339db735",
+        "seq": 1,
+        "parent_message_id": "claude:fc8354aa-d861-47fa-a6cc-331d6920e458",
+        "role": "assistant",
+        "created_at": "2026-08-12T18:19:11.044Z",
+        "text": "",
+        "model": "claude-sonnet-5",
+        "raw": {
+          "parentUuid": "fc8354aa-d861-47fa-a6cc-331d6920e458",
+          "isSidechain": false,
+          "message": {
+            "model": "claude-sonnet-5",
+            "id": "msg_011CdyKFoRPb8gbu2LYS3rD2",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "",
+                "signature": "ErQCCokBCBAYAipAQJIwYdGk0GceJuOFanQrA+CWwCbARC8nWe39UDt3UUI68ILOsVHau3p/j5qJnorXZT/BZTxF6g6nSi8fEuikRDIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiRhN2EwNDBkOC03Y2M1LTRkOTctYjcxZC1iNmZkYzRiOTczODkSDLabN5d/dkXMGI2W6BoMm6df2aLfB3KW1GtPIjBXECrJHlUGjnjCyEvpMMrkLtWuHqEQolQEWmP1tIIhU0Oy7lA16rNED3tyXR0B5xMqWGbVQJ40ZkjuEOgVkWLE1Wyz/uG7LBFmUaQqHQ8ic4dUc6lkUqFzU/bDYBz5/2ZKS8TrsPirU3hzgZa+Ypso0lxKNEYdojixtdQsHFQRUcJIJjcDgq3L0r8YAQ=="
+              }
+            ],
+            "stop_reason": "tool_use",
+            "stop_sequence": null,
+            "stop_details": null,
+            "usage": {
+              "input_tokens": 2,
+              "cache_creation_input_tokens": 5458,
+              "cache_read_input_tokens": 30873,
+              "output_tokens": 108,
+              "output_tokens_details": {
+                "thinking_tokens": 29
+              },
+              "server_tool_use": {
+                "web_search_requests": 0,
+                "web_fetch_requests": 0
+              },
+              "service_tier": "standard",
+              "cache_creation": {
+                "ephemeral_1h_input_tokens": 5458,
+                "ephemeral_5m_input_tokens": 0
+              },
+              "inference_geo": "not_available",
+              "iterations": [
+                {
+                  "input_tokens": 2,
+                  "output_tokens": 108,
+                  "cache_read_input_tokens": 30873,
+                  "cache_creation_input_tokens": 5458,
+                  "cache_creation": {
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 5458
+                  },
+                  "type": "message"
+                }
+              ],
+              "speed": "standard"
+            },
+            "diagnostics": null
+          },
+          "requestId": "req_011CdyKFnT6rYW9VysMHu1cW",
+          "type": "assistant",
+          "uuid": "44ef2806-1d53-4882-8ec2-dbf0ef68621c",
+          "timestamp": "2026-08-12T18:19:11.044Z",
+          "effort": "high",
+          "userType": "external",
+          "entrypoint": "remote_desktop",
+          "cwd": "/tmp/claude-0/-home-user/94ba8eae-3476-51cf-a4d4-b0b5339db735/scratchpad/fixture-project",
+          "sessionId": "94ba8eae-3476-51cf-a4d4-b0b5339db735",
+          "version": "2.1.228",
+          "gitBranch": "HEAD"
+        }
+      },
+      {
+        "message_id": "claude:e22417a4-7d89-4115-af74-91ad1690e025",
+        "session_id": "claude:94ba8eae-3476-51cf-a4d4-b0b5339db735",
+        "seq": 2,
+        "parent_message_id": "claude:44ef2806-1d53-4882-8ec2-dbf0ef68621c",
+        "role": "assistant",
+        "created_at": "2026-08-12T18:19:11.768Z",
+        "text": "",
+        "model": "claude-sonnet-5",
+        "raw": {
+          "parentUuid": "44ef2806-1d53-4882-8ec2-dbf0ef68621c",
+          "isSidechain": false,
+          "message": {
+            "model": "claude-sonnet-5",
+            "id": "msg_011CdyKFoRPb8gbu2LYS3rD2",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_01FrTAL9gbc7Fp3VgKpvw6VH",
+                "name": "Bash",
+                "input": {
+                  "command": "echo hello fixture",
+                  "description": "Echo test string"
+                },
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            ],
+            "stop_reason": "tool_use",
+            "stop_sequence": null,
+            "stop_details": null,
+            "usage": {
+              "input_tokens": 2,
+              "cache_creation_input_tokens": 5458,
+              "cache_read_input_tokens": 30873,
+              "output_tokens": 108,
+              "output_tokens_details": {
+                "thinking_tokens": 29
+              },
+              "server_tool_use": {
+                "web_search_requests": 0,
+                "web_fetch_requests": 0
+              },
+              "service_tier": "standard",
+              "cache_creation": {
+                "ephemeral_1h_input_tokens": 5458,
+                "ephemeral_5m_input_tokens": 0
+              },
+              "inference_geo": "not_available",
+              "iterations": [
+                {
+                  "input_tokens": 2,
+                  "output_tokens": 108,
+                  "cache_read_input_tokens": 30873,
+                  "cache_creation_input_tokens": 5458,
+                  "cache_creation": {
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 5458
+                  },
+                  "type": "message"
+                }
+              ],
+              "speed": "standard"
+            },
+            "diagnostics": null
+          },
+          "requestId": "req_011CdyKFnT6rYW9VysMHu1cW",
+          "type": "assistant",
+          "uuid": "e22417a4-7d89-4115-af74-91ad1690e025",
+          "timestamp": "2026-08-12T18:19:11.768Z",
+          "effort": "high",
+          "userType": "external",
+          "entrypoint": "remote_desktop",
+          "cwd": "/tmp/claude-0/-home-user/94ba8eae-3476-51cf-a4d4-b0b5339db735/scratchpad/fixture-project",
+          "sessionId": "94ba8eae-3476-51cf-a4d4-b0b5339db735",
+          "version": "2.1.228",
+          "gitBranch": "HEAD"
+        }
+      },
+      {
+        "message_id": "claude:d22789b7-cbad-4f8c-8654-715de3f4abda",
+        "session_id": "claude:94ba8eae-3476-51cf-a4d4-b0b5339db735",
+        "seq": 3,
+        "parent_message_id": "claude:75ca9980-2b60-471f-98a9-c508c157a032",
+        "role": "assistant",
+        "created_at": "2026-08-12T18:19:12.755Z",
+        "text": "done",
+        "model": "claude-sonnet-5",
+        "raw": {
+          "parentUuid": "75ca9980-2b60-471f-98a9-c508c157a032",
+          "isSidechain": false,
+          "message": {
+            "model": "claude-sonnet-5",
+            "id": "msg_011CdyKFyKCpueVLj5L98We8",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "done"
+              }
+            ],
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "stop_details": null,
+            "usage": {
+              "input_tokens": 2,
+              "cache_creation_input_tokens": 118,
+              "cache_read_input_tokens": 36331,
+              "output_tokens": 3,
+              "output_tokens_details": {
+                "thinking_tokens": 0
+              },
+              "server_tool_use": {
+                "web_search_requests": 0,
+                "web_fetch_requests": 0
+              },
+              "service_tier": "standard",
+              "cache_creation": {
+                "ephemeral_1h_input_tokens": 118,
+                "ephemeral_5m_input_tokens": 0
+              },
+              "inference_geo": "not_available",
+              "iterations": [
+                {
+                  "input_tokens": 2,
+                  "output_tokens": 3,
+                  "cache_read_input_tokens": 36331,
+                  "cache_creation_input_tokens": 118,
+                  "cache_creation": {
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 118
+                  },
+                  "type": "message"
+                }
+              ],
+              "speed": "standard"
+            },
+            "diagnostics": null
+          },
+          "requestId": "req_011CdyKFxPeHZrstKusFiQk9",
+          "type": "assistant",
+          "uuid": "d22789b7-cbad-4f8c-8654-715de3f4abda",
+          "timestamp": "2026-08-12T18:19:12.755Z",
+          "effort": "high",
+          "userType": "external",
+          "entrypoint": "remote_desktop",
+          "cwd": "/tmp/claude-0/-home-user/94ba8eae-3476-51cf-a4d4-b0b5339db735/scratchpad/fixture-project",
+          "sessionId": "94ba8eae-3476-51cf-a4d4-b0b5339db735",
+          "version": "2.1.228",
+          "gitBranch": "HEAD"
+        }
+      }
+    ],
+    "tool_calls": [
+      {
+        "tool_call_id": "claude:toolu_01FrTAL9gbc7Fp3VgKpvw6VH",
+        "session_id": "claude:94ba8eae-3476-51cf-a4d4-b0b5339db735",
+        "message_id": "claude:e22417a4-7d89-4115-af74-91ad1690e025",
+        "seq": 0,
+        "tool_name": "Bash",
+        "arguments": {
+          "command": "echo hello fixture",
+          "description": "Echo test string"
+        },
+        "output": "hello fixture",
+        "status": "ok",
+        "created_at": "2026-08-12T18:19:11.768Z"
+      }
+    ]
+  }
+}

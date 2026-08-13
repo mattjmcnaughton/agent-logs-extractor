@@ -1,0 +1,19 @@
+{
+  "stats": {
+    "Skipped": null
+  },
+  "doc": {
+    "session": {
+      "session_id": "",
+      "vendor": "",
+      "project_path": "",
+      "project_name": "",
+      "started_at": "0001-01-01T00:00:00Z",
+      "ended_at": "0001-01-01T00:00:00Z",
+      "vendor_version": "",
+      "source_path": ""
+    },
+    "messages": null,
+    "tool_calls": null
+  }
+}

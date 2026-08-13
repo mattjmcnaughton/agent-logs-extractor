@@ -1,0 +1,503 @@
+{
+  "stats": {
+    "Skipped": {
+      "bookkeeping_record": 9
+    }
+  },
+  "doc": {
+    "session": {
+      "session_id": "claude:40def079-df87-46bd-ac03-5ffbf1a74ca2",
+      "vendor": "claude",
+      "project_path": "/home/user/fixture-sidechain",
+      "project_name": "fixture-sidechain",
+      "started_at": "2026-08-13T11:16:42.55Z",
+      "ended_at": "2026-08-13T11:16:49.806Z",
+      "git_branch": "main",
+      "vendor_version": "2.1.231",
+      "source_path": "claude/projects/-home-user-fixture-sidechain/40def079-df87-46bd-ac03-5ffbf1a74ca2.jsonl"
+    },
+    "messages": [
+      {
+        "message_id": "claude:96cd8ed3-273e-4ca6-8748-56d0c25d7ed2",
+        "session_id": "claude:40def079-df87-46bd-ac03-5ffbf1a74ca2",
+        "seq": 0,
+        "role": "user",
+        "created_at": "2026-08-13T11:16:42.55Z",
+        "text": "Use the Task tool to launch one general-purpose subagent whose prompt is: run the bash command 'echo hello from subagent' and report its output. After the subagent finishes, reply with exactly: done",
+        "raw": {
+          "parentUuid": null,
+          "isSidechain": false,
+          "promptId": "22da3371-f278-493b-932a-f0697bd19e41",
+          "type": "user",
+          "message": {
+            "role": "user",
+            "content": "Use the Task tool to launch one general-purpose subagent whose prompt is: run the bash command 'echo hello from subagent' and report its output. After the subagent finishes, reply with exactly: done"
+          },
+          "uuid": "96cd8ed3-273e-4ca6-8748-56d0c25d7ed2",
+          "timestamp": "2026-08-13T11:16:42.550Z",
+          "permissionMode": "default",
+          "promptSource": "sdk",
+          "userType": "external",
+          "entrypoint": "sdk-cli",
+          "cwd": "/home/user/fixture-sidechain",
+          "sessionId": "40def079-df87-46bd-ac03-5ffbf1a74ca2",
+          "version": "2.1.231",
+          "gitBranch": "main"
+        }
+      },
+      {
+        "message_id": "claude:f79681d1-3c37-4427-b8d8-ca62b8485190",
+        "session_id": "claude:40def079-df87-46bd-ac03-5ffbf1a74ca2",
+        "seq": 1,
+        "parent_message_id": "claude:330286dd-1208-486b-b7dc-85bd2e3ea12b",
+        "role": "assistant",
+        "created_at": "2026-08-13T11:16:44.654Z",
+        "text": "",
+        "model": "claude-sonnet-5",
+        "raw": {
+          "parentUuid": "330286dd-1208-486b-b7dc-85bd2e3ea12b",
+          "isSidechain": false,
+          "message": {
+            "model": "claude-sonnet-5",
+            "id": "msg_011CdzerHm8pvBMWvsExskSR",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "",
+                "signature": "EtgCCokBCBAYAipAn+axc2gZ89kT6G4IazD91TWhT7DNbVAy8/kvYRS1jPj+8RDlFID48/6lucA9KpE2Qi8SXJC+13i/lThEIT3eKDIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiRhN2EwNDBkOC03Y2M1LTRkOTctYjcxZC1iNmZkYzRiOTczODkSDBMrDIxieCtpu6jKahoMjrIDlB321H9vV1IJIjBGv+69E/JEYKAkG7kwOLe8ngvOCSBrhxHXxfhqCPWEgOdWniWFDO1J3Osh4939nwkqfDdw6gQmKLFcJ+ckO6REejcZP3wYp2qy2dHQ1vg0hYnbZuNzDEP4BfSiOa9+8MwPcaj8d5ML7WmbIpIYzQaDFe+6TsiLsLDzGJr+OuEIIBlFIzXQbQ3dimS0Mf/D4wzoSHHUxuR2niCfqeZkyIBfkrxG0ekQ7uuc4eJoZgwYAQ=="
+              }
+            ],
+            "stop_reason": "tool_use",
+            "stop_sequence": null,
+            "stop_details": null,
+            "usage": {
+              "input_tokens": 2,
+              "cache_creation_input_tokens": 4343,
+              "cache_read_input_tokens": 26762,
+              "output_tokens": 184,
+              "output_tokens_details": {
+                "thinking_tokens": 34
+              },
+              "server_tool_use": {
+                "web_search_requests": 0,
+                "web_fetch_requests": 0
+              },
+              "service_tier": "standard",
+              "cache_creation": {
+                "ephemeral_1h_input_tokens": 4343,
+                "ephemeral_5m_input_tokens": 0
+              },
+              "inference_geo": "not_available",
+              "iterations": [
+                {
+                  "input_tokens": 2,
+                  "output_tokens": 184,
+                  "cache_read_input_tokens": 26762,
+                  "cache_creation_input_tokens": 4343,
+                  "cache_creation": {
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 4343
+                  },
+                  "type": "message"
+                }
+              ],
+              "speed": "standard"
+            },
+            "diagnostics": null
+          },
+          "requestId": "req_011CdzerGgeQFogs3jmEck9H",
+          "type": "assistant",
+          "uuid": "f79681d1-3c37-4427-b8d8-ca62b8485190",
+          "timestamp": "2026-08-13T11:16:44.654Z",
+          "effort": "high",
+          "userType": "external",
+          "entrypoint": "sdk-cli",
+          "cwd": "/home/user/fixture-sidechain",
+          "sessionId": "40def079-df87-46bd-ac03-5ffbf1a74ca2",
+          "version": "2.1.231",
+          "gitBranch": "main"
+        }
+      },
+      {
+        "message_id": "claude:4f809333-abe6-4a9c-ae7c-9912fca41c4a",
+        "session_id": "claude:40def079-df87-46bd-ac03-5ffbf1a74ca2",
+        "seq": 2,
+        "parent_message_id": "claude:f79681d1-3c37-4427-b8d8-ca62b8485190",
+        "role": "assistant",
+        "created_at": "2026-08-13T11:16:45.675Z",
+        "text": "",
+        "model": "claude-sonnet-5",
+        "raw": {
+          "parentUuid": "f79681d1-3c37-4427-b8d8-ca62b8485190",
+          "isSidechain": false,
+          "message": {
+            "model": "claude-sonnet-5",
+            "id": "msg_011CdzerHm8pvBMWvsExskSR",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_01BDUbYNjgU13kKTWciYEUEm",
+                "name": "Agent",
+                "input": {
+                  "description": "Run echo command",
+                  "prompt": "Run the bash command 'echo hello from subagent' and report its output.",
+                  "subagent_type": "general-purpose",
+                  "run_in_background": false
+                },
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            ],
+            "stop_reason": "tool_use",
+            "stop_sequence": null,
+            "stop_details": null,
+            "usage": {
+              "input_tokens": 2,
+              "cache_creation_input_tokens": 4343,
+              "cache_read_input_tokens": 26762,
+              "output_tokens": 184,
+              "output_tokens_details": {
+                "thinking_tokens": 34
+              },
+              "server_tool_use": {
+                "web_search_requests": 0,
+                "web_fetch_requests": 0
+              },
+              "service_tier": "standard",
+              "cache_creation": {
+                "ephemeral_1h_input_tokens": 4343,
+                "ephemeral_5m_input_tokens": 0
+              },
+              "inference_geo": "not_available",
+              "iterations": [
+                {
+                  "input_tokens": 2,
+                  "output_tokens": 184,
+                  "cache_read_input_tokens": 26762,
+                  "cache_creation_input_tokens": 4343,
+                  "cache_creation": {
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 4343
+                  },
+                  "type": "message"
+                }
+              ],
+              "speed": "standard"
+            },
+            "diagnostics": null
+          },
+          "requestId": "req_011CdzerGgeQFogs3jmEck9H",
+          "type": "assistant",
+          "uuid": "4f809333-abe6-4a9c-ae7c-9912fca41c4a",
+          "timestamp": "2026-08-13T11:16:45.675Z",
+          "effort": "high",
+          "userType": "external",
+          "entrypoint": "sdk-cli",
+          "cwd": "/home/user/fixture-sidechain",
+          "sessionId": "40def079-df87-46bd-ac03-5ffbf1a74ca2",
+          "version": "2.1.231",
+          "gitBranch": "main"
+        }
+      },
+      {
+        "message_id": "claude:912d76e3-60f1-428b-9d92-153d552cd52a",
+        "session_id": "claude:40def079-df87-46bd-ac03-5ffbf1a74ca2",
+        "seq": 3,
+        "parent_message_id": "claude:4f809333-abe6-4a9c-ae7c-9912fca41c4a",
+        "role": "user",
+        "created_at": "2026-08-13T11:16:45.684Z",
+        "text": "Run the bash command 'echo hello from subagent' and report its output.",
+        "raw": {
+          "parentUuid": null,
+          "isSidechain": true,
+          "promptId": "22da3371-f278-493b-932a-f0697bd19e41",
+          "agentId": "a0fb4161db4e2c307",
+          "type": "user",
+          "message": {
+            "role": "user",
+            "content": "Run the bash command 'echo hello from subagent' and report its output."
+          },
+          "uuid": "912d76e3-60f1-428b-9d92-153d552cd52a",
+          "timestamp": "2026-08-13T11:16:45.684Z",
+          "userType": "external",
+          "entrypoint": "sdk-cli",
+          "cwd": "/home/user/fixture-sidechain",
+          "sessionId": "40def079-df87-46bd-ac03-5ffbf1a74ca2",
+          "version": "2.1.231",
+          "gitBranch": "main"
+        }
+      },
+      {
+        "message_id": "claude:745e4041-2983-4ca7-a171-23068a898bdd",
+        "session_id": "claude:40def079-df87-46bd-ac03-5ffbf1a74ca2",
+        "seq": 4,
+        "parent_message_id": "claude:bfcc2407-1417-46f9-bcc3-a49aabfc458f",
+        "role": "assistant",
+        "created_at": "2026-08-13T11:16:47.606Z",
+        "text": "",
+        "model": "claude-sonnet-5",
+        "raw": {
+          "parentUuid": "bfcc2407-1417-46f9-bcc3-a49aabfc458f",
+          "isSidechain": true,
+          "agentId": "a0fb4161db4e2c307",
+          "message": {
+            "model": "claude-sonnet-5",
+            "id": "msg_011CdzerWzN7bhMLt3z6cq5t",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_01LT6HE1Vb4do18ShHMyCNJ8",
+                "name": "Bash",
+                "input": {
+                  "command": "echo hello from subagent",
+                  "description": "Echo test message"
+                },
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            ],
+            "stop_reason": "tool_use",
+            "stop_sequence": null,
+            "stop_details": null,
+            "usage": {
+              "input_tokens": 2,
+              "cache_creation_input_tokens": 3267,
+              "cache_read_input_tokens": 10693,
+              "output_tokens": 79,
+              "output_tokens_details": {
+                "thinking_tokens": 0
+              },
+              "server_tool_use": {
+                "web_search_requests": 0,
+                "web_fetch_requests": 0
+              },
+              "service_tier": "standard",
+              "cache_creation": {
+                "ephemeral_1h_input_tokens": 0,
+                "ephemeral_5m_input_tokens": 3267
+              },
+              "inference_geo": "not_available",
+              "iterations": [
+                {
+                  "input_tokens": 2,
+                  "output_tokens": 79,
+                  "cache_read_input_tokens": 10693,
+                  "cache_creation_input_tokens": 3267,
+                  "cache_creation": {
+                    "ephemeral_5m_input_tokens": 3267,
+                    "ephemeral_1h_input_tokens": 0
+                  },
+                  "type": "message"
+                }
+              ],
+              "speed": "standard"
+            },
+            "diagnostics": null
+          },
+          "requestId": "req_011CdzerWCF4gARiG4GFAZz3",
+          "attributionAgent": "general-purpose",
+          "type": "assistant",
+          "uuid": "745e4041-2983-4ca7-a171-23068a898bdd",
+          "timestamp": "2026-08-13T11:16:47.606Z",
+          "effort": "high",
+          "userType": "external",
+          "entrypoint": "sdk-cli",
+          "cwd": "/home/user/fixture-sidechain",
+          "sessionId": "40def079-df87-46bd-ac03-5ffbf1a74ca2",
+          "version": "2.1.231",
+          "gitBranch": "main"
+        }
+      },
+      {
+        "message_id": "claude:aa92cb59-ff45-4e44-aaeb-ca0c460f8855",
+        "session_id": "claude:40def079-df87-46bd-ac03-5ffbf1a74ca2",
+        "seq": 5,
+        "parent_message_id": "claude:e0864e59-4449-49f6-9c60-b43759a6189a",
+        "role": "assistant",
+        "created_at": "2026-08-13T11:16:48.934Z",
+        "text": "The command output: `hello from subagent`",
+        "model": "claude-sonnet-5",
+        "raw": {
+          "parentUuid": "e0864e59-4449-49f6-9c60-b43759a6189a",
+          "isSidechain": true,
+          "agentId": "a0fb4161db4e2c307",
+          "message": {
+            "model": "claude-sonnet-5",
+            "id": "msg_011CdzerfcXfp28H35QkouzS",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "The command output: `hello from subagent`"
+              }
+            ],
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "stop_details": null,
+            "usage": {
+              "input_tokens": 2,
+              "cache_creation_input_tokens": 90,
+              "cache_read_input_tokens": 13960,
+              "output_tokens": 14,
+              "output_tokens_details": {
+                "thinking_tokens": 0
+              },
+              "server_tool_use": {
+                "web_search_requests": 0,
+                "web_fetch_requests": 0
+              },
+              "service_tier": "standard",
+              "cache_creation": {
+                "ephemeral_1h_input_tokens": 0,
+                "ephemeral_5m_input_tokens": 90
+              },
+              "inference_geo": "not_available",
+              "iterations": [
+                {
+                  "input_tokens": 2,
+                  "output_tokens": 14,
+                  "cache_read_input_tokens": 13960,
+                  "cache_creation_input_tokens": 90,
+                  "cache_creation": {
+                    "ephemeral_5m_input_tokens": 90,
+                    "ephemeral_1h_input_tokens": 0
+                  },
+                  "type": "message"
+                }
+              ],
+              "speed": "standard"
+            },
+            "diagnostics": null
+          },
+          "requestId": "req_011Cdzeres924cwx42PRBsPe",
+          "attributionAgent": "general-purpose",
+          "type": "assistant",
+          "uuid": "aa92cb59-ff45-4e44-aaeb-ca0c460f8855",
+          "timestamp": "2026-08-13T11:16:48.934Z",
+          "effort": "high",
+          "userType": "external",
+          "entrypoint": "sdk-cli",
+          "cwd": "/home/user/fixture-sidechain",
+          "sessionId": "40def079-df87-46bd-ac03-5ffbf1a74ca2",
+          "version": "2.1.231",
+          "gitBranch": "main"
+        }
+      },
+      {
+        "message_id": "claude:5c69ac93-1622-4eb0-abf6-bee8ccd673b1",
+        "session_id": "claude:40def079-df87-46bd-ac03-5ffbf1a74ca2",
+        "seq": 6,
+        "parent_message_id": "claude:4c0e79ee-684d-4f4c-b4bf-3831407d3c1f",
+        "role": "assistant",
+        "created_at": "2026-08-13T11:16:49.806Z",
+        "text": "done",
+        "model": "claude-sonnet-5",
+        "raw": {
+          "parentUuid": "4c0e79ee-684d-4f4c-b4bf-3831407d3c1f",
+          "isSidechain": false,
+          "message": {
+            "model": "claude-sonnet-5",
+            "id": "msg_011CdzerkicQ3xkkqB857MMN",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "done"
+              }
+            ],
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "stop_details": null,
+            "usage": {
+              "input_tokens": 2,
+              "cache_creation_input_tokens": 303,
+              "cache_read_input_tokens": 31105,
+              "output_tokens": 3,
+              "output_tokens_details": {
+                "thinking_tokens": 0
+              },
+              "server_tool_use": {
+                "web_search_requests": 0,
+                "web_fetch_requests": 0
+              },
+              "service_tier": "standard",
+              "cache_creation": {
+                "ephemeral_1h_input_tokens": 303,
+                "ephemeral_5m_input_tokens": 0
+              },
+              "inference_geo": "not_available",
+              "iterations": [
+                {
+                  "input_tokens": 2,
+                  "output_tokens": 3,
+                  "cache_read_input_tokens": 31105,
+                  "cache_creation_input_tokens": 303,
+                  "cache_creation": {
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 303
+                  },
+                  "type": "message"
+                }
+              ],
+              "speed": "standard"
+            },
+            "diagnostics": null
+          },
+          "requestId": "req_011Cdzerjxiofm2gimqoRhBv",
+          "type": "assistant",
+          "uuid": "5c69ac93-1622-4eb0-abf6-bee8ccd673b1",
+          "timestamp": "2026-08-13T11:16:49.806Z",
+          "effort": "high",
+          "userType": "external",
+          "entrypoint": "sdk-cli",
+          "cwd": "/home/user/fixture-sidechain",
+          "sessionId": "40def079-df87-46bd-ac03-5ffbf1a74ca2",
+          "version": "2.1.231",
+          "gitBranch": "main"
+        }
+      }
+    ],
+    "tool_calls": [
+      {
+        "tool_call_id": "claude:toolu_01BDUbYNjgU13kKTWciYEUEm",
+        "session_id": "claude:40def079-df87-46bd-ac03-5ffbf1a74ca2",
+        "message_id": "claude:4f809333-abe6-4a9c-ae7c-9912fca41c4a",
+        "seq": 0,
+        "tool_name": "Agent",
+        "arguments": {
+          "description": "Run echo command",
+          "prompt": "Run the bash command 'echo hello from subagent' and report its output.",
+          "subagent_type": "general-purpose",
+          "run_in_background": false
+        },
+        "output": "The command output: `hello from subagent`\nagentId: a0fb4161db4e2c307 (use SendMessage with to: 'a0fb4161db4e2c307', summary: '\u003c5-10 word recap\u003e' to continue this agent)\n\u003cusage\u003esubagent_tokens: 14066\ntool_uses: 1\nduration_ms: 3280\u003c/usage\u003e",
+        "status": "ok",
+        "created_at": "2026-08-13T11:16:45.675Z"
+      },
+      {
+        "tool_call_id": "claude:toolu_01LT6HE1Vb4do18ShHMyCNJ8",
+        "session_id": "claude:40def079-df87-46bd-ac03-5ffbf1a74ca2",
+        "message_id": "claude:745e4041-2983-4ca7-a171-23068a898bdd",
+        "seq": 1,
+        "tool_name": "Bash",
+        "arguments": {
+          "command": "echo hello from subagent",
+          "description": "Echo test message"
+        },
+        "output": "hello from subagent",
+        "status": "ok",
+        "created_at": "2026-08-13T11:16:47.606Z"
+      }
+    ]
+  }
+}

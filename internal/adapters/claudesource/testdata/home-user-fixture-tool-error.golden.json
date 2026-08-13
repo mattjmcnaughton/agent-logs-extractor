@@ -1,0 +1,297 @@
+{
+  "stats": {
+    "Skipped": {
+      "bookkeeping_record": 7
+    }
+  },
+  "doc": {
+    "session": {
+      "session_id": "claude:8f1900e4-5b83-46c2-a244-2811996f87c3",
+      "vendor": "claude",
+      "project_path": "/home/user/fixture-tool-error",
+      "project_name": "fixture-tool-error",
+      "started_at": "2026-08-13T11:17:26.87Z",
+      "ended_at": "2026-08-13T11:17:29.81Z",
+      "git_branch": "main",
+      "vendor_version": "2.1.231",
+      "source_path": "claude/projects/-home-user-fixture-tool-error/8f1900e4-5b83-46c2-a244-2811996f87c3.jsonl"
+    },
+    "messages": [
+      {
+        "message_id": "claude:1833baba-5b9e-4dd3-a97c-84e3cdd90c53",
+        "session_id": "claude:8f1900e4-5b83-46c2-a244-2811996f87c3",
+        "seq": 0,
+        "role": "user",
+        "created_at": "2026-08-13T11:17:26.87Z",
+        "text": "Use the Bash tool to run exactly this command once: cat /nonexistent-fixture-file. It will fail; do not retry or investigate. Then reply with exactly: done",
+        "raw": {
+          "parentUuid": null,
+          "isSidechain": false,
+          "promptId": "0b0d996a-b066-4723-88fa-a1075def4a93",
+          "type": "user",
+          "message": {
+            "role": "user",
+            "content": "Use the Bash tool to run exactly this command once: cat /nonexistent-fixture-file. It will fail; do not retry or investigate. Then reply with exactly: done"
+          },
+          "uuid": "1833baba-5b9e-4dd3-a97c-84e3cdd90c53",
+          "timestamp": "2026-08-13T11:17:26.870Z",
+          "permissionMode": "default",
+          "promptSource": "sdk",
+          "userType": "external",
+          "entrypoint": "sdk-cli",
+          "cwd": "/home/user/fixture-tool-error",
+          "sessionId": "8f1900e4-5b83-46c2-a244-2811996f87c3",
+          "version": "2.1.231",
+          "gitBranch": "main"
+        }
+      },
+      {
+        "message_id": "claude:e8833095-4969-402b-a8e3-b4ae562327dc",
+        "session_id": "claude:8f1900e4-5b83-46c2-a244-2811996f87c3",
+        "seq": 1,
+        "parent_message_id": "claude:aeb2ae7c-2e8e-4c40-ba21-2c5a48b65e29",
+        "role": "assistant",
+        "created_at": "2026-08-13T11:17:28.2Z",
+        "text": "",
+        "model": "claude-sonnet-5",
+        "raw": {
+          "parentUuid": "aeb2ae7c-2e8e-4c40-ba21-2c5a48b65e29",
+          "isSidechain": false,
+          "message": {
+            "model": "claude-sonnet-5",
+            "id": "msg_011CdzeuYo6PhTAiiGrMcuHN",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "",
+                "signature": "Eo8CCokBCBAYAipAv6YKYxirhg4WVcH8v8TFRN/Yq+S1p1N/hG3DpFNyvOVPcxT0p4BoF8SPxecY9zHBq4IDhD0oyYqhwt52HS1BuDIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiRhN2EwNDBkOC03Y2M1LTRkOTctYjcxZC1iNmZkYzRiOTczODkSDIBFsZKseFrekW8qYhoMZSBaezzVHe8+06mfIjDS0Bmu/ao44LcYZjZ9XsyoqxzfK4kFpLz26TRlKE5a5feXkfh2KzaM5oveWLuW7dwqM83DRIDwH9EfbClgwBJYPG28c6SYiaNEJYW9NHepKbi3IOl7BeQXnbrnpfzwA/tl7sYyEBgB"
+              }
+            ],
+            "stop_reason": "tool_use",
+            "stop_sequence": null,
+            "stop_details": null,
+            "usage": {
+              "input_tokens": 2,
+              "cache_creation_input_tokens": 4336,
+              "cache_read_input_tokens": 26762,
+              "output_tokens": 104,
+              "output_tokens_details": {
+                "thinking_tokens": 12
+              },
+              "server_tool_use": {
+                "web_search_requests": 0,
+                "web_fetch_requests": 0
+              },
+              "service_tier": "standard",
+              "cache_creation": {
+                "ephemeral_1h_input_tokens": 4336,
+                "ephemeral_5m_input_tokens": 0
+              },
+              "inference_geo": "not_available",
+              "iterations": [
+                {
+                  "input_tokens": 2,
+                  "output_tokens": 104,
+                  "cache_read_input_tokens": 26762,
+                  "cache_creation_input_tokens": 4336,
+                  "cache_creation": {
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 4336
+                  },
+                  "type": "message"
+                }
+              ],
+              "speed": "standard"
+            },
+            "diagnostics": null
+          },
+          "requestId": "req_011CdzeuY3wpKL3mEHKCXune",
+          "type": "assistant",
+          "uuid": "e8833095-4969-402b-a8e3-b4ae562327dc",
+          "timestamp": "2026-08-13T11:17:28.200Z",
+          "effort": "high",
+          "userType": "external",
+          "entrypoint": "sdk-cli",
+          "cwd": "/home/user/fixture-tool-error",
+          "sessionId": "8f1900e4-5b83-46c2-a244-2811996f87c3",
+          "version": "2.1.231",
+          "gitBranch": "main"
+        }
+      },
+      {
+        "message_id": "claude:c6a432c5-0fae-45e3-afae-0a4dcac66bc8",
+        "session_id": "claude:8f1900e4-5b83-46c2-a244-2811996f87c3",
+        "seq": 2,
+        "parent_message_id": "claude:e8833095-4969-402b-a8e3-b4ae562327dc",
+        "role": "assistant",
+        "created_at": "2026-08-13T11:17:28.839Z",
+        "text": "",
+        "model": "claude-sonnet-5",
+        "raw": {
+          "parentUuid": "e8833095-4969-402b-a8e3-b4ae562327dc",
+          "isSidechain": false,
+          "message": {
+            "model": "claude-sonnet-5",
+            "id": "msg_011CdzeuYo6PhTAiiGrMcuHN",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_01FUATKH4b5XsMviFXq4VNcj",
+                "name": "Bash",
+                "input": {
+                  "command": "cat /nonexistent-fixture-file",
+                  "description": "Read nonexistent fixture file"
+                },
+                "caller": {
+                  "type": "direct"
+                }
+              }
+            ],
+            "stop_reason": "tool_use",
+            "stop_sequence": null,
+            "stop_details": null,
+            "usage": {
+              "input_tokens": 2,
+              "cache_creation_input_tokens": 4336,
+              "cache_read_input_tokens": 26762,
+              "output_tokens": 104,
+              "output_tokens_details": {
+                "thinking_tokens": 12
+              },
+              "server_tool_use": {
+                "web_search_requests": 0,
+                "web_fetch_requests": 0
+              },
+              "service_tier": "standard",
+              "cache_creation": {
+                "ephemeral_1h_input_tokens": 4336,
+                "ephemeral_5m_input_tokens": 0
+              },
+              "inference_geo": "not_available",
+              "iterations": [
+                {
+                  "input_tokens": 2,
+                  "output_tokens": 104,
+                  "cache_read_input_tokens": 26762,
+                  "cache_creation_input_tokens": 4336,
+                  "cache_creation": {
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 4336
+                  },
+                  "type": "message"
+                }
+              ],
+              "speed": "standard"
+            },
+            "diagnostics": null
+          },
+          "requestId": "req_011CdzeuY3wpKL3mEHKCXune",
+          "type": "assistant",
+          "uuid": "c6a432c5-0fae-45e3-afae-0a4dcac66bc8",
+          "timestamp": "2026-08-13T11:17:28.839Z",
+          "effort": "high",
+          "userType": "external",
+          "entrypoint": "sdk-cli",
+          "cwd": "/home/user/fixture-tool-error",
+          "sessionId": "8f1900e4-5b83-46c2-a244-2811996f87c3",
+          "version": "2.1.231",
+          "gitBranch": "main"
+        }
+      },
+      {
+        "message_id": "claude:f127acdb-0703-46d9-be1d-c44102e74872",
+        "session_id": "claude:8f1900e4-5b83-46c2-a244-2811996f87c3",
+        "seq": 3,
+        "parent_message_id": "claude:b08fa0c2-2a5c-42ce-b199-19ba2b1ebd2f",
+        "role": "assistant",
+        "created_at": "2026-08-13T11:17:29.81Z",
+        "text": "done",
+        "model": "claude-sonnet-5",
+        "raw": {
+          "parentUuid": "b08fa0c2-2a5c-42ce-b199-19ba2b1ebd2f",
+          "isSidechain": false,
+          "message": {
+            "model": "claude-sonnet-5",
+            "id": "msg_011Cdzeui3U4St2sGhpJz1i3",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "done"
+              }
+            ],
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "stop_details": null,
+            "usage": {
+              "input_tokens": 2,
+              "cache_creation_input_tokens": 144,
+              "cache_read_input_tokens": 31098,
+              "output_tokens": 3,
+              "output_tokens_details": {
+                "thinking_tokens": 0
+              },
+              "server_tool_use": {
+                "web_search_requests": 0,
+                "web_fetch_requests": 0
+              },
+              "service_tier": "standard",
+              "cache_creation": {
+                "ephemeral_1h_input_tokens": 144,
+                "ephemeral_5m_input_tokens": 0
+              },
+              "inference_geo": "not_available",
+              "iterations": [
+                {
+                  "input_tokens": 2,
+                  "output_tokens": 3,
+                  "cache_read_input_tokens": 31098,
+                  "cache_creation_input_tokens": 144,
+                  "cache_creation": {
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 144
+                  },
+                  "type": "message"
+                }
+              ],
+              "speed": "standard"
+            },
+            "diagnostics": null
+          },
+          "requestId": "req_011CdzeuhJ51p5ErH6bRqw3g",
+          "type": "assistant",
+          "uuid": "f127acdb-0703-46d9-be1d-c44102e74872",
+          "timestamp": "2026-08-13T11:17:29.810Z",
+          "effort": "high",
+          "userType": "external",
+          "entrypoint": "sdk-cli",
+          "cwd": "/home/user/fixture-tool-error",
+          "sessionId": "8f1900e4-5b83-46c2-a244-2811996f87c3",
+          "version": "2.1.231",
+          "gitBranch": "main"
+        }
+      }
+    ],
+    "tool_calls": [
+      {
+        "tool_call_id": "claude:toolu_01FUATKH4b5XsMviFXq4VNcj",
+        "session_id": "claude:8f1900e4-5b83-46c2-a244-2811996f87c3",
+        "message_id": "claude:c6a432c5-0fae-45e3-afae-0a4dcac66bc8",
+        "seq": 0,
+        "tool_name": "Bash",
+        "arguments": {
+          "command": "cat /nonexistent-fixture-file",
+          "description": "Read nonexistent fixture file"
+        },
+        "output": "Exit code 1\ncat: /nonexistent-fixture-file: No such file or directory",
+        "status": "error",
+        "created_at": "2026-08-13T11:17:28.839Z"
+      }
+    ]
+  }
+}
