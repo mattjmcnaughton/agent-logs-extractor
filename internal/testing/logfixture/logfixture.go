@@ -19,14 +19,33 @@ func Dir() string {
 	return filepath.Dir(file)
 }
 
+// ClaudeRoot returns Dir()/claude, mirroring ~/.claude.
+func ClaudeRoot() string {
+	return filepath.Join(Dir(), "claude")
+}
+
 // ClaudeProjectsDir returns Dir()/claude/projects, mirroring ~/.claude/projects.
 func ClaudeProjectsDir() string {
 	return filepath.Join(Dir(), "claude", "projects")
 }
 
+// CodexRoot returns Dir()/codex, mirroring ~/.codex.
+func CodexRoot() string {
+	return filepath.Join(Dir(), "codex")
+}
+
 // PathologicalRoot returns Dir()/pathological.
 func PathologicalRoot() string {
 	return filepath.Join(Dir(), "pathological")
+}
+
+// VendorRoots returns the fixture tree's top-level vendor directories:
+// claude/, codex/, and pathological/. Test helpers that walk the whole
+// fixture tree should iterate this instead of spelling out directory
+// names, so a future vendor fixture tree (or a renamed one) only needs to
+// be added here.
+func VendorRoots() []string {
+	return []string{ClaudeRoot(), CodexRoot(), PathologicalRoot()}
 }
 
 // Fixture project directory names under ClaudeProjectsDir(). Named

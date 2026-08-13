@@ -28,9 +28,12 @@ path or a session UUID) live in `logfixture.go` — `logfixture.SessionFile`,
 
 ## Provenance
 
-All fixtures are committed **verbatim** — do not hand-edit; regenerate instead
-with `just scrub-fixture` (see "Regenerating a fixture" below). Each
-subsection gives the exact command used to generate and scrub it.
+All *vendor-captured* fixtures (`claude/`, `codex/`) are committed **verbatim**
+— do not hand-edit; regenerate instead with `just scrub-fixture` (see
+"Regenerating a fixture" below). Each subsection gives the exact command used
+to generate and scrub it. `pathological/` is a documented exception to this —
+it cannot be produced by `just scrub-fixture` even in principle; see its own
+Provenance subsection below.
 
 ### `claude/projects/-tmp-claude-0--home-user-…-scratchpad-fixture-project/94ba8eae-….jsonl`
 
@@ -104,8 +107,13 @@ subsection gives the exact command used to generate and scrub it.
     "Use the Task tool to launch one general-purpose subagent whose prompt is: run the bash command 'echo hello from subagent' and report its output. After the subagent finishes, reply with exactly: done" \
     --allowedTools Task,Bash --max-turns 8 < /dev/null
   ```
-  Then scrub into the tree (from the repo root):
+  Then scrub into the tree (from the repo root). `scrub.Tree` merges into
+  `-dst` and never deletes (see "Regenerating a fixture" below), and the
+  session UUID changes on every regeneration, so remove the stale project
+  directory first or the fixture tree will end up with two `*.jsonl`
+  session files where `logfixture.SessionFile` expects exactly one:
   ```bash
+  rm -rf internal/testing/logfixture/claude/projects/-home-user-fixture-sidechain
   just scrub-fixture -src "$WORK/home/.claude/projects/$(ls "$WORK/home/.claude/projects")" \
     -dst internal/testing/logfixture/claude/projects \
     -map "$WORK/proj=/home/user/fixture-sidechain" -branch main
@@ -145,7 +153,10 @@ subsection gives the exact command used to generate and scrub it.
     "Use the Bash tool to run exactly this command once: cat /nonexistent-fixture-file. It will fail; do not retry or investigate. Then reply with exactly: done" \
     --allowedTools Bash --max-turns 6 < /dev/null
   ```
+  Same merge-not-replace caveat as above — remove the stale project
+  directory first:
   ```bash
+  rm -rf internal/testing/logfixture/claude/projects/-home-user-fixture-tool-error
   just scrub-fixture -src "$WORK/home/.claude/projects/$(ls "$WORK/home/.claude/projects")" \
     -dst internal/testing/logfixture/claude/projects \
     -map "$WORK/proj=/home/user/fixture-tool-error" -branch main
@@ -159,6 +170,36 @@ subsection gives the exact command used to generate and scrub it.
   `session_meta`, `event_msg`, `turn_context`, `world_state`, and
   user/developer `response_item` message records.
 - Predates `just scrub-fixture`; see "Known gaps" below.
+
+### `pathological/`
+
+Hand-derived from the fixtures above (see "Pathological cases" below for the
+skip-and-count contract each one exercises), edited by hand after the source
+was already scrubbed, using only synthetic, already-canonical values
+(`-home-user-demo`, session UUIDs `11111111…`/`22222222…`/etc.):
+
+| File | Derived from | Mutation |
+|---|---|---|
+| `claude/.../11111111-….jsonl` | the single-turn Claude fixture (`94ba8eae-….jsonl` above), copied into a synthetic `-home-user-demo` project dir | truncated mid-JSON partway through its final record |
+| `claude/.../22222222-….jsonl` | same source file, truncated to its first 4 records | a record with `"type":"future-record-type"` inserted between the `enqueue`/`dequeue` queue-operation records |
+| `claude/.../33333333-….jsonl` | same source file, all 12 records but one | the `tool_result` record for the Bash `tool_use` deleted outright, leaving the following `assistant` "done" record's `parentUuid` pointing at a uuid that appears nowhere else in the file |
+| `claude/.../44444444-….jsonl` | n/a | truncated to zero bytes |
+| `codex/.../rollout-…-11111111-….jsonl` | the real Codex fixture (`rollout-2026-08-12T17-53-24-019ff71b-….jsonl`), renamed to a synthetic timestamp/uuid | truncated mid-JSON partway through its 3rd record |
+
+**Why hand-derived, not `just scrub-fixture`-generated:** `scrub.Line`
+requires its input to already be a well-formed JSON object (`decodeObject` in
+`scrub.go`) and rejects anything else with `"input is not a JSON object"`.
+Verified: running `scrubfixture` against `pathological/claude/projects` fails
+immediately on the truncated file with exactly that error. A tool whose whole
+job is refusing malformed input cannot be used to produce malformed input, so
+`just scrub-fixture` cannot regenerate any file in this directory even in
+principle.
+
+**Second documented exception to "never hand-edit":** alongside the
+hand-scrubbed single-turn Claude fixture (see "Known gaps" below),
+`pathological/` is committed by direct edit rather than through
+`just scrub-fixture`, and is expected to stay that way — there is no
+tool-driven regeneration path for it to eventually migrate to.
 
 ## Known gaps
 
@@ -197,6 +238,17 @@ Use `just scrub-fixture -src <real session file-or-dir> -dst <fixture dir> [-map
 - copies non-`.jsonl` files (e.g. a subagent's `.meta.json` sidecar)
   through verbatim rather than rewriting them line-by-line, but still
   findings-checks their full contents before exiting 0;
+- **merges into `-dst`, never deletes:** it only ever adds or overwrites the
+  files it writes this run; a stale file already under `-dst` that this run
+  doesn't happen to rewrite is left in place. Since the session UUID changes
+  on every regeneration, remove the fixture's project directory under `-dst`
+  first whenever you're regenerating it with a new UUID — otherwise the old
+  and new session files sit side by side and `logfixture.SessionFile`'s
+  "exactly one `*.jsonl`" contract breaks. (See the `rm -rf` step in the
+  sidechain and tool-error recipes above.)
+- fails (exit 1) if `-src` yields no files to write at all — an explicit
+  invocation that scrubs nothing is treated as operator error, not a silent
+  no-op success;
 - re-scans every file it wrote this run afterward and **fails (non-zero
   exit) if anything still matches a redaction rule**, unless run with
   `-force`;

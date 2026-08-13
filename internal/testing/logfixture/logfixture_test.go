@@ -53,13 +53,13 @@ func TestFixturesAreValidJSONL(t *testing.T) {
 	// claude/ and codex/ alike -- every non-pathological fixture line must
 	// be well-formed. pathological/ is intentionally excluded: its whole
 	// purpose is malformed input (truncated lines, unknown types).
-	eachJSONLLine(t, filepath.Join(logfixture.Dir(), "claude"), func(path string, lineNum int, line []byte) {
+	eachJSONLLine(t, logfixture.ClaudeRoot(), func(path string, lineNum int, line []byte) {
 		var v map[string]json.RawMessage
 		if err := json.Unmarshal(line, &v); err != nil {
 			t.Errorf("%s:%d: not a JSON object: %v", path, lineNum, err)
 		}
 	})
-	eachJSONLLine(t, filepath.Join(logfixture.Dir(), "codex"), func(path string, lineNum int, line []byte) {
+	eachJSONLLine(t, logfixture.CodexRoot(), func(path string, lineNum int, line []byte) {
 		var v map[string]json.RawMessage
 		if err := json.Unmarshal(line, &v); err != nil {
 			t.Errorf("%s:%d: not a JSON object: %v", path, lineNum, err)
@@ -138,7 +138,7 @@ func toolResultBlocksOf(content json.RawMessage) []toolResultBlock {
 // meaningful, this test -- not just prose -- should notice.
 func TestToolUseCallerIsAlwaysDirect(t *testing.T) {
 	found := 0
-	eachJSONLLine(t, filepath.Join(logfixture.Dir(), "claude"), func(path string, lineNum int, line []byte) {
+	eachJSONLLine(t, logfixture.ClaudeRoot(), func(path string, lineNum int, line []byte) {
 		r := decodeRecord(t, path, lineNum, line)
 		if r.Message == nil {
 			return
@@ -337,16 +337,15 @@ func TestToolErrorFixtureExercisesFailedCall(t *testing.T) {
 	}
 }
 
-// eachFixtureDataFile walks the committed fixture data directories (claude/,
-// codex/, pathological/ -- never the package's own .go/.md files) and calls
-// fn with the path and full bytes of every non-.jsonl file found. Today
-// that means subagent .meta.json sidecars, which scrub.Tree copies through
-// verbatim rather than rewriting line-by-line.
+// eachFixtureDataFile walks logfixture.VendorRoots() (never the package's
+// own .go/.md files) and calls fn with the path and full bytes of every
+// non-.jsonl file found. Today that means subagent .meta.json sidecars,
+// which scrub.Tree copies through verbatim rather than rewriting
+// line-by-line.
 func eachFixtureDataFile(t *testing.T, fn func(path string, data []byte)) {
 	t.Helper()
 
-	for _, dir := range []string{"claude", "codex", "pathological"} {
-		root := filepath.Join(logfixture.Dir(), dir)
+	for _, root := range logfixture.VendorRoots() {
 		err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
