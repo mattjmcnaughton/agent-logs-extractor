@@ -131,19 +131,29 @@ func (b *builder) addRecord(r rawRecord, links map[int]string, rootSeen map[int]
 		blocks, isString, str = blocksOf(r.rec.Message.Content)
 	}
 
-	// A record mixing tool_result and text blocks is not observed in any
-	// fixture; if it ever occurs, treat it as a tool-result carrier (join
-	// the results, drop the text) rather than double-counting it.
+	// The sidechain root is the first message from a subagent transcript
+	// (fileRank >= 1) whose own parentUuid is null/absent — flattened
+	// subagent records otherwise carry their own parentUuid normally.
+	// Computed and claimed (rootSeen set) before the tool-result early
+	// return below, so the guard stays total even for a subagent
+	// transcript whose very first record happens to carry tool_result
+	// blocks and never becomes a message: without claiming rootSeen here,
+	// a later parentUuid==null record in the same file would be mistaken
+	// for the root instead.
+	isRoot := r.fileRank >= 1 && !rootSeen[r.fileRank] &&
+		(r.rec.ParentUUID == nil || *r.rec.ParentUUID == "")
+	if isRoot {
+		rootSeen[r.fileRank] = true
+	}
+
+	// A record mixing tool_result with text and/or tool_use blocks is not
+	// observed in any fixture; if it ever occurs, treat it as a
+	// tool-result carrier (join the results, drop the text and any
+	// tool_use blocks) rather than double-counting it.
 	if !isString && containsToolResult(blocks) {
 		b.applyToolResults(blocks)
 		return
 	}
-
-	// The sidechain root is the first message from a subagent transcript
-	// (fileRank >= 1) whose own parentUuid is null/absent — flattened
-	// subagent records otherwise carry their own parentUuid normally.
-	isRoot := r.fileRank >= 1 && !rootSeen[r.fileRank] &&
-		(r.rec.ParentUUID == nil || *r.rec.ParentUUID == "")
 
 	msgID, ok := b.addMessage(r, blocks, isString, str)
 	if !ok {
@@ -151,7 +161,6 @@ func (b *builder) addRecord(r rawRecord, links map[int]string, rootSeen map[int]
 	}
 
 	if isRoot {
-		rootSeen[r.fileRank] = true
 		if toolUseID := links[r.fileRank]; toolUseID != "" {
 			if idx, found := b.byToolUse[nsID(toolUseID)]; found {
 				b.doc.Messages[b.byUUID[msgID]].ParentMessageID = b.doc.ToolCalls[idx].MessageID

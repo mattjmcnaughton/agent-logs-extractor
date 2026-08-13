@@ -33,7 +33,6 @@ type record struct {
 	CWD           string          `json:"cwd"`
 	GitBranch     string          `json:"gitBranch"`
 	Version       string          `json:"version"`
-	IsSidechain   bool            `json:"isSidechain"`
 	AgentID       string          `json:"agentId"`
 	Message       *apiMessage     `json:"message"`
 	Content       json.RawMessage `json:"content"`       // system records carry text here, not under message
