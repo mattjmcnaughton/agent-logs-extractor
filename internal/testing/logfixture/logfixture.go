@@ -39,6 +39,14 @@ func PathologicalRoot() string {
 	return filepath.Join(Dir(), "pathological")
 }
 
+// PathologicalClaudeRoot returns PathologicalRoot()/claude — a
+// ~/.claude-shaped root whose projects tree holds the malformed Claude
+// fixtures, so a source adapter can be pointed at it exactly as at
+// ClaudeRoot().
+func PathologicalClaudeRoot() string {
+	return filepath.Join(PathologicalRoot(), "claude")
+}
+
 // VendorRoots returns the fixture tree's top-level vendor directories:
 // claude/, codex/, and pathological/. Test helpers that walk the whole
 // fixture tree should iterate this instead of spelling out directory
