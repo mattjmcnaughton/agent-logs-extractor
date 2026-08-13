@@ -91,7 +91,8 @@ Provenance subsection below.
   for how this shapes the MVP's flattening decision.
 - **Regenerate:**
   ```bash
-  WORK=$(mktemp -d)
+  # The template must be alphanumeric — see the path-charset rule below.
+  WORK=$(mktemp -d -p /tmp alefixtureXXXXXX)
   mkdir -p "$WORK/home" "$WORK/proj"
   cd "$WORK/proj"
   git init -q -b main . && git config user.email fixture@example.com && git config user.name fixture
@@ -118,12 +119,18 @@ Provenance subsection below.
     -dst internal/testing/logfixture/claude/projects \
     -map "$WORK/proj=/home/user/fixture-sidechain" -branch main
   ```
-  Use a `mktemp -d` template with no `.` in it (e.g.
-  `mktemp -d -p "$SCRATCH" fixsidechainXXXXXX`) — the default
-  `tmp.XXXXXXXXXX` template's dot gets encoded into the project directory
-  name by Claude itself, and `scrub.Tree`'s path-renaming only rewrites
-  `/` (per its documented contract), so a dot in the source path will not
-  line up with the `-map` value and the directory will not be renamed.
+  **Path-charset rule — the generating source path must contain only
+  `[A-Za-z0-9/-]`.** Claude encodes a project directory name from the cwd
+  by replacing *every* non-alphanumeric character with `-`, while
+  `scrub.Tree`'s path renaming rewrites only `/` (per its documented
+  contract). So any other character in the source path — a `.`, a `_`, a
+  space — makes the encoded directory name diverge from the `-map` value,
+  the rename silently does not apply, and the fixture lands under a
+  directory carrying the generating machine's real path. The tool still
+  exits 0: `scrub.Findings` scans file *contents*, never path names. This
+  is why the recipes above pass an explicit alphanumeric `mktemp`
+  template rather than the default `tmp.XXXXXXXXXX`, whose `.` breaks the
+  match. Check the resulting directory name before committing.
 
 ### `claude/projects/-home-user-fixture-tool-error/`
 
@@ -141,7 +148,8 @@ Provenance subsection below.
   `TestToolErrorFixtureExercisesFailedCall` in `logfixture_test.go`.
 - **Regenerate:**
   ```bash
-  WORK=$(mktemp -d)
+  # Alphanumeric template — same path-charset rule as the sidechain recipe.
+  WORK=$(mktemp -d -p /tmp alefixtureXXXXXX)
   mkdir -p "$WORK/home" "$WORK/proj"
   cd "$WORK/proj"
   git init -q -b main . && git config user.email fixture@example.com && git config user.name fixture
@@ -181,7 +189,7 @@ was already scrubbed, using only synthetic, already-canonical values
 | File | Derived from | Mutation |
 |---|---|---|
 | `claude/.../11111111-….jsonl` | the single-turn Claude fixture (`94ba8eae-….jsonl` above), copied into a synthetic `-home-user-demo` project dir | truncated mid-JSON partway through its final record |
-| `claude/.../22222222-….jsonl` | same source file, truncated to its first 4 records | a record with `"type":"future-record-type"` inserted between the `enqueue`/`dequeue` queue-operation records |
+| `claude/.../22222222-….jsonl` | same source file, truncated to its first 3 records | a record with `"type":"future-record-type"` inserted between the `enqueue`/`dequeue` queue-operation records |
 | `claude/.../33333333-….jsonl` | same source file, all 12 records but one | the `tool_result` record for the Bash `tool_use` deleted outright, leaving the following `assistant` "done" record's `parentUuid` pointing at a uuid that appears nowhere else in the file |
 | `claude/.../44444444-….jsonl` | n/a | truncated to zero bytes |
 | `codex/.../rollout-…-11111111-….jsonl` | the real Codex fixture (`rollout-2026-08-12T17-53-24-019ff71b-….jsonl`), renamed to a synthetic timestamp/uuid | truncated mid-JSON partway through its 3rd record |
@@ -251,7 +259,13 @@ Use `just scrub-fixture -src <real session file-or-dir> -dst <fixture dir> [-map
   no-op success;
 - re-scans every file it wrote this run afterward and **fails (non-zero
   exit) if anything still matches a redaction rule**, unless run with
-  `-force`;
+  `-force`. Note this scans file *contents* only, never output path
+  names — see the path-charset rule in the sidechain recipe above, and
+  check the directory names in the diff before committing;
+- warns when a path-shaped `-map` rule renamed no output path at all,
+  which is the signal that the path-charset rule above was violated. It
+  is a warning rather than a failure because a path-shaped `-map` may
+  legitimately target only text inside records;
 - `-dry-run` scrubs into a throwaway scratch directory instead of `-dst`
   — useful for checking whether a set of `-map` rules leaves any findings
   before committing anything — and reports/verifies exactly as a real run

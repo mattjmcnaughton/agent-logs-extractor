@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/testing/logfixture/scrub"
@@ -110,6 +111,8 @@ func run(args []string, stderr io.Writer) int {
 		return 1
 	}
 
+	warnUnappliedPathMaps(maps, written, writeDst, stderr)
+
 	dirty, err := verify(written, writeDst, stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "scrubfixture: %v\n", err)
@@ -118,7 +121,7 @@ func run(args []string, stderr io.Writer) int {
 
 	if dryRun {
 		fmt.Fprintln(stderr, "scrubfixture: dry run, nothing written under -dst")
-		if dirty {
+		if dirty && !force {
 			return 1
 		}
 		return 0
@@ -165,6 +168,39 @@ func verify(written []string, base string, stderr io.Writer) (dirty bool, err er
 		}
 	}
 	return dirty, nil
+}
+
+// warnUnappliedPathMaps reports -map rules that look like directory
+// renames but left no trace in any output path.
+//
+// Claude encodes a project directory name from the cwd by replacing every
+// non-alphanumeric character with "-", while scrub.Tree's path renaming
+// rewrites only "/". So a -map whose Old contains any other character (the
+// "." in mktemp's default tmp.XXXXXXXXXX template is the easy mistake)
+// silently fails to rename, and the fixture lands under a directory
+// carrying the generating machine's real path. Contents are scrubbed
+// either way, so verify still reports "clean" -- nothing else notices.
+//
+// This is a warning, not a failure: a path-shaped -map may legitimately
+// target only text inside records (a path mentioned in a tool result)
+// rather than the session's own cwd.
+func warnUnappliedPathMaps(maps []scrub.Rule, written []string, base string, stderr io.Writer) {
+	for _, m := range maps {
+		if !strings.HasPrefix(m.Old, "/") {
+			continue // not a path rule; nothing to rename
+		}
+		encoded := strings.ReplaceAll(m.New, "/", "-")
+		if slices.ContainsFunc(written, func(f string) bool {
+			rel, err := filepath.Rel(base, f)
+			return err == nil && strings.Contains(rel, encoded)
+		}) {
+			continue
+		}
+		fmt.Fprintf(stderr, "scrubfixture: warning: -map %s=%s did not rename any output path; "+
+			"check the output directory names before committing "+
+			"(-map path renaming encodes only \"/\", Claude encodes every non-alphanumeric character)\n",
+			m.Old, m.New)
+	}
 }
 
 // guardDisjoint rejects -src/-dst pairs where either resolved path is a
