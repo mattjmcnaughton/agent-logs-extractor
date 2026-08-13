@@ -89,7 +89,7 @@ Provenance subsection below.
   closed). This means **regenerating the sidechain fixture requires
   regenerating `internal/adapters/claudesource`'s golden files too**
   (`go test ./internal/adapters/claudesource -run TestGoldenParse -update`,
-  then review the diff — see that package's test file for the anti-rot
+  then review the diff — see that package's test files for the anti-rot
   mechanisms guarding a blind `-update`), and the sidecar itself must keep
   surviving future regenerations of this fixture.
   See `TestSidechainFixtureExercisesSubagents` in
