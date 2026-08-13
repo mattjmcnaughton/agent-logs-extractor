@@ -12,6 +12,13 @@ import (
 // callers can errors.Is against one value regardless of adapter.
 var ErrRebuildFinished = errors.New("ports: store rebuild already finished")
 
+// ErrInvalidSessionDoc is what Put returns for a doc whose session cannot
+// be stored: an empty or non-vendor-namespaced session id. Implementations
+// must return it (or wrap it) so callers — including #8's sync, which must
+// skip such a doc before calling Put rather than treat this as a normal
+// per-doc failure — can errors.Is against one value regardless of adapter.
+var ErrInvalidSessionDoc = errors.New("ports: session doc has no usable session id")
+
 // CanonicalStore owns the normalized store this tool writes. Every sync is
 // a full rebuild (TDD decision 6): callers build a complete new generation
 // through a StoreRebuild and swap it in atomically, so a failed sync always
