@@ -5,12 +5,19 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
+	"github.com/spf13/afero"
+
+	"github.com/mattjmcnaughton/agent-logs-extractor/internal/adapters/claudesource"
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/adapters/cli"
+	"github.com/mattjmcnaughton/agent-logs-extractor/internal/adapters/jsonlstore"
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/export"
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/model"
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/sync"
@@ -41,13 +48,15 @@ func main() {
 	paths := defaultPaths()
 
 	// Driven adapters land here as their tickets close:
-	//   sources: claudesource (landed, #6; not yet wired here), codexsource (#10)
-	//   store:   jsonlstore   (#7)
+	//   sources: claudesource (landed, #6), codexsource (#10)
+	//   store:   jsonlstore   (landed, #7)
 	//   sinks:   duckdbcli    (#9)
-	// Until then the use cases are constructed with no adapters; their Run
-	// methods return ErrNotImplemented without dereferencing them.
-	var sources []ports.ConversationSource
-	var store ports.CanonicalStore
+	// Until #9 lands, Export is constructed with no sinks registered, so
+	// `export <sink>` always reports "unknown sink" rather than
+	// dereferencing a nil adapter.
+	fsys := afero.NewOsFs()
+	sources := []ports.ConversationSource{claudesource.New(log)}
+	var store ports.CanonicalStore = jsonlstore.New(fsys, paths.storeRoot, log)
 	var exporters []ports.Exporter
 
 	deps := cli.Deps{
@@ -58,7 +67,15 @@ func main() {
 		Level:            level,
 	}
 
-	if err := cli.NewRoot(deps).Execute(); err != nil {
+	// NotifyContext, not just signal.Notify: Ctrl-C during a sync must
+	// unwind through Run's deferred r.Discard() rather than killing the
+	// process mid-Put and leaving a ".staging-*" directory behind for the
+	// next BeginRebuild's sweep to find. os/signal is infrastructure, so
+	// this lives here in wiring, never in internal/core.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := cli.NewRoot(deps).ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "agent-logs-extractor:", err)
 		os.Exit(1)
 	}
@@ -68,13 +85,14 @@ func main() {
 // environment (README "File layout" / "Sandboxing").
 type resolvedPaths struct {
 	vendorRoots map[model.Vendor]string
+	storeRoot   string
 	exportOut   string
 }
 
 // defaultPaths resolves the tool's default paths from
 // AGENT_LOGS_EXTRACTOR_HOME (falling back to the user's home directory),
 // matching the README. It is pure path arithmetic — no directory creation,
-// no other I/O — and unexercised by tests here; #8 owns its acceptance.
+// no other I/O — see main_test.go for its acceptance.
 func defaultPaths() resolvedPaths {
 	home := os.Getenv("AGENT_LOGS_EXTRACTOR_HOME")
 	if home == "" {
@@ -90,6 +108,7 @@ func defaultPaths() resolvedPaths {
 			model.VendorClaude: filepath.Join(home, ".claude"),
 			model.VendorCodex:  filepath.Join(home, ".codex"),
 		},
+		storeRoot: filepath.Join(home, ".local", "share", "agent-logs-extractor", "store"),
 		exportOut: filepath.Join(home, ".local", "share", "agent-logs-extractor", "export", "logs.duckdb"),
 	}
 }

@@ -33,8 +33,9 @@ internal/
 Concrete adapters (source parsers, the canonical store, the DuckDB exporter)
 land as their tickets close; the port and use-case shapes above are frozen
 by this ticket for them to build against. `claudesource` (#6) and
-`jsonlstore` (#7) have landed; `codexsource` and `duckdbcli` remain to
-come.
+`jsonlstore` (#7) have landed and are wired into `main.go` as of #8, which
+also implements `internal/core/sync`; `codexsource` and `duckdbcli` remain
+to come.
 
 ## Layering
 
