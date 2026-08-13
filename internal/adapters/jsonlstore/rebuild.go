@@ -200,7 +200,10 @@ func (r *rebuild) statLiveIsDir(live string) (bool, error) {
 // Discard drops the pending generation, leaving the live store untouched.
 // The done flag is the entire state machine: it makes Discard after Commit
 // a no-op, Discard called twice a no-op, and `defer r.Discard()` always
-// safe to write regardless of how Commit/Put came out.
+// safe to write regardless of how Commit/Put came out. staging is
+// guaranteed non-empty here: it is only ever cleared together with done
+// (by Commit's success path or by this method itself), so the r.done
+// check above already rules out the only case where it could be "".
 func (r *rebuild) Discard() error {
 	if r.done {
 		return nil
@@ -209,9 +212,6 @@ func (r *rebuild) Discard() error {
 	staging := r.staging
 	r.staging = ""
 
-	if staging == "" {
-		return nil
-	}
 	// RemoveAll of a missing path is not an error on either afero.MemMapFs
 	// or afero.OsFs, so no existence check is needed first.
 	if err := r.s.fs.RemoveAll(staging); err != nil {

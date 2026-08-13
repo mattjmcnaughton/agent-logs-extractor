@@ -5,9 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -60,120 +61,23 @@ func doc(vendor model.Vendor, uuid, text string) model.SessionDoc {
 	}
 }
 
-// --- equality helpers (field-wise: reflect.DeepEqual is unsafe here, see
-// model.go's documented nil-Raw round-trip gotcha, plan §F5) -----------------
-
-func sessionDocsEqual(a, b model.SessionDoc) bool {
-	if !sessionsEqual(a.Session, b.Session) {
-		return false
-	}
-	if len(a.Messages) != len(b.Messages) {
-		return false
-	}
-	for i := range a.Messages {
-		if !messagesEqual(a.Messages[i], b.Messages[i]) {
-			return false
-		}
-	}
-	if len(a.ToolCalls) != len(b.ToolCalls) {
-		return false
-	}
-	for i := range a.ToolCalls {
-		if !toolCallsEqual(a.ToolCalls[i], b.ToolCalls[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-func sessionsEqual(a, b model.Session) bool {
-	return a.SessionID == b.SessionID &&
-		a.Vendor == b.Vendor &&
-		a.ProjectPath == b.ProjectPath &&
-		a.ProjectName == b.ProjectName &&
-		a.StartedAt.Equal(b.StartedAt) &&
-		a.EndedAt.Equal(b.EndedAt) &&
-		a.GitBranch == b.GitBranch &&
-		a.VendorVersion == b.VendorVersion &&
-		a.SourcePath == b.SourcePath
-}
-
-func messagesEqual(a, b model.Message) bool {
-	return a.MessageID == b.MessageID &&
-		a.SessionID == b.SessionID &&
-		a.Seq == b.Seq &&
-		a.ParentMessageID == b.ParentMessageID &&
-		a.Role == b.Role &&
-		a.CreatedAt.Equal(b.CreatedAt) &&
-		a.Text == b.Text &&
-		a.Model == b.Model &&
-		rawEqual(a.Raw, b.Raw)
-}
-
-func toolCallsEqual(a, b model.ToolCall) bool {
-	return a.ToolCallID == b.ToolCallID &&
-		a.SessionID == b.SessionID &&
-		a.MessageID == b.MessageID &&
-		a.Seq == b.Seq &&
-		a.ToolName == b.ToolName &&
-		rawEqual(a.Arguments, b.Arguments) &&
-		a.Output == b.Output &&
-		a.Status == b.Status &&
-		a.CreatedAt.Equal(b.CreatedAt)
-}
-
-// rawEqual treats a nil json.RawMessage and the literal "null" as
-// equivalent, since a nil Raw round-trips through JSON as
-// json.RawMessage("null"), never back to nil (model.go).
-func rawEqual(a, b json.RawMessage) bool {
-	an, bn := string(a), string(b)
-	if len(a) == 0 {
-		an = "null"
-	}
-	if len(b) == 0 {
-		bn = "null"
-	}
-	return an == bn
-}
-
 // --- filesystem inspection helpers -----------------------------------------
 
-func readSessionDocs(t *testing.T, fsys afero.Fs, sessionsRoot string) map[string]model.SessionDoc {
+// assertDocBytesEqual compares the bytes actually written for a session doc
+// against encodeDoc(want) — the on-disk format itself — instead of
+// unmarshaling and comparing field-by-field. This sidesteps model.go's
+// documented nil-Raw round-trip gotcha entirely: encodeDoc(want) already
+// encodes a nil Raw the same way Put did, "null", so a byte compare needs no
+// special-casing, and it pins the on-disk format as a side effect.
+func assertDocBytesEqual(t *testing.T, got []byte, want model.SessionDoc) {
 	t.Helper()
-	out := make(map[string]model.SessionDoc)
-	exists, err := afero.DirExists(fsys, sessionsRoot)
+	wantBytes, err := encodeDoc(want)
 	if err != nil {
-		t.Fatalf("checking %s exists: %v", sessionsRoot, err)
+		t.Fatalf("encodeDoc(want): %v", err)
 	}
-	if !exists {
-		return out
+	if !bytes.Equal(got, wantBytes) {
+		t.Errorf("doc bytes mismatch:\ngot:  %s\nwant: %s", got, wantBytes)
 	}
-	err = afero.Walk(fsys, sessionsRoot, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			return nil
-		}
-		data, err := afero.ReadFile(fsys, path)
-		if err != nil {
-			return err
-		}
-		var d model.SessionDoc
-		if err := json.Unmarshal(data, &d); err != nil {
-			return fmt.Errorf("unmarshal %s: %w", path, err)
-		}
-		rel, err := filepath.Rel(sessionsRoot, path)
-		if err != nil {
-			return err
-		}
-		out[rel] = d
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walking %s: %v", sessionsRoot, err)
-	}
-	return out
 }
 
 func snapshotBytes(t *testing.T, fsys afero.Fs, root string) map[string][]byte {
@@ -228,11 +132,7 @@ func assertSnapshotsEqual(t *testing.T, got, want map[string][]byte) {
 }
 
 func sortedKeys[V any](m map[string]V) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
+	return slices.Sorted(maps.Keys(m))
 }
 
 func dirEntryNames(t *testing.T, fsys afero.Fs, root string) []string {
@@ -307,16 +207,12 @@ func TestCommitWritesDocsAtExpectedPaths(t *testing.T) {
 		}
 	}
 
-	got := readSessionDocs(t, fsys, sessionsRoot)
+	got := snapshotBytes(t, fsys, sessionsRoot)
 	if len(got) != 2 {
 		t.Fatalf("got %d docs, want 2: %v", len(got), sortedKeys(got))
 	}
-	if gotDoc, ok := got["claude/aaa-uuid.json"]; !ok || !sessionDocsEqual(gotDoc, claudeDoc) {
-		t.Errorf("claude doc mismatch: got %+v, want %+v", gotDoc, claudeDoc)
-	}
-	if gotDoc, ok := got["codex/bbb-uuid.json"]; !ok || !sessionDocsEqual(gotDoc, codexDoc) {
-		t.Errorf("codex doc mismatch: got %+v, want %+v", gotDoc, codexDoc)
-	}
+	assertDocBytesEqual(t, got["claude/aaa-uuid.json"], claudeDoc)
+	assertDocBytesEqual(t, got["codex/bbb-uuid.json"], codexDoc)
 }
 
 // --- U3 ----------------------------------------------------------------
@@ -377,14 +273,11 @@ func TestPutSameSessionIDReplaces(t *testing.T) {
 	}
 
 	sessionsRoot := filepath.Join(store.Root(), sessionsDir)
-	got := readSessionDocs(t, fsys, sessionsRoot)
+	got := snapshotBytes(t, fsys, sessionsRoot)
 	if len(got) != 1 {
 		t.Fatalf("got %d docs, want 1: %v", len(got), sortedKeys(got))
 	}
-	gotDoc := got["claude/aaa-uuid.json"]
-	if !sessionDocsEqual(gotDoc, second) {
-		t.Errorf("expected second Put to win: got %+v, want %+v", gotDoc, second)
-	}
+	assertDocBytesEqual(t, got["claude/aaa-uuid.json"], second)
 }
 
 // --- U5 ----------------------------------------------------------------
@@ -401,7 +294,7 @@ func TestCommitReplacesPreviousGenerationWholesale(t *testing.T) {
 	commitDocs(t, store, docB2)
 
 	sessionsRoot := filepath.Join(store.Root(), sessionsDir)
-	got := readSessionDocs(t, fsys, sessionsRoot)
+	got := snapshotBytes(t, fsys, sessionsRoot)
 	if len(got) != 1 {
 		t.Fatalf("got %d docs, want 1: %v", len(got), sortedKeys(got))
 	}
@@ -409,9 +302,7 @@ func TestCommitReplacesPreviousGenerationWholesale(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected claude/bbb-uuid.json to be present")
 	}
-	if !sessionDocsEqual(gotDoc, docB2) {
-		t.Errorf("gen2 doc mismatch: got %+v, want %+v", gotDoc, docB2)
-	}
+	assertDocBytesEqual(t, gotDoc, docB2)
 	if _, stillThere := got["claude/aaa-uuid.json"]; stillThere {
 		t.Errorf("gen1-only doc aaa-uuid should be gone after gen2 commit")
 	}
@@ -511,7 +402,7 @@ func TestDeferDiscardAfterCommitIsSafe(t *testing.T) {
 	}()
 
 	sessionsRoot := filepath.Join(store.Root(), sessionsDir)
-	got := readSessionDocs(t, fsys, sessionsRoot)
+	got := snapshotBytes(t, fsys, sessionsRoot)
 	if len(got) != 1 {
 		t.Fatalf("expected the committed doc to survive the deferred Discard, got %d docs: %v", len(got), sortedKeys(got))
 	}
