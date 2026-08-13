@@ -111,19 +111,26 @@ func (s *Source) Parse(ctx context.Context, path string) (model.SessionDoc, mode
 		subPaths = nil
 	}
 
-	var links []sidechainLink
+	links := make(map[int]string, len(subPaths))
 	for i, subPath := range subPaths {
 		fileRank := i + 1
 
 		subRecs, subSkips, err := readRecords(ctx, subPath, fileRank)
 		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				// A cancelled/expired context must propagate, not be
+				// swallowed as if it were an ordinary I/O failure: silently
+				// continuing here would persist a partial doc — missing an
+				// entire flattened sidechain — with err == nil.
+				return model.SessionDoc{}, model.ParseStats{}, err
+			}
 			s.log.Warn("claudesource: reading subagent transcript failed; parent session still ingested", "path", subPath, "error", err)
 			continue
 		}
 		skips.merge(subSkips)
 		allRecs = append(allRecs, subRecs...)
 
-		links = append(links, s.resolveSidechainLink(subPath, fileRank, subRecs, parentRecs))
+		links[fileRank] = s.resolveSidechainLink(subPath, fileRank, subRecs, parentRecs)
 	}
 
 	slices.SortStableFunc(allRecs, func(a, b rawRecord) int {
@@ -136,7 +143,7 @@ func (s *Source) Parse(ctx context.Context, path string) (model.SessionDoc, mode
 		return a.lineIndex - b.lineIndex
 	})
 
-	doc, normSkips := normalize(allRecs, path, links)
+	doc, normSkips := normalize(allRecs, parentRecs, path, links)
 	skips.merge(normSkips)
 
 	stats := model.ParseStats{Skipped: skips.counts()}
@@ -150,17 +157,17 @@ func (s *Source) Parse(ctx context.Context, path string) (model.SessionDoc, mode
 // parent's spawning Agent tool call: the .meta.json sidecar's toolUseId is
 // tried first (primary), then the toolUseResult.agentId join against the
 // parent's records (fallback); an unresolved link is logged at debug and
-// left empty, never an error (§C.5, §D4).
-func (s *Source) resolveSidechainLink(subPath string, fileRank int, subRecs, parentRecs []rawRecord) sidechainLink {
+// reported as "", never an error (§C.5, §D4).
+func (s *Source) resolveSidechainLink(subPath string, fileRank int, subRecs, parentRecs []rawRecord) string {
 	toolUseID := metaToolUseID(subPath)
 	if toolUseID == "" {
 		agentID := agentIDOf(subRecs)
 		toolUseID = agentIDToolUseID(parentRecs, agentID)
 	}
 	if toolUseID == "" {
-		s.log.Debug("claudesource: could not resolve sidechain's parent link; parent_message_id will be empty", "path", subPath)
+		s.log.Debug("claudesource: could not resolve sidechain's parent link; parent_message_id will be empty", "path", subPath, "fileRank", fileRank)
 	}
-	return sidechainLink{fileRank: fileRank, toolUseID: toolUseID}
+	return toolUseID
 }
 
 // readRecords decodes path line by line into rawRecords, tallying skips by
@@ -178,7 +185,7 @@ func readRecords(ctx context.Context, path string, fileRank int) ([]rawRecord, s
 
 	var (
 		recs      []rawRecord
-		skips     skipTally
+		skips     = make(skipTally)
 		lastOrder time.Time
 		lineNum   int
 	)
@@ -194,30 +201,37 @@ func readRecords(ctx context.Context, path string, fileRank int) ([]rawRecord, s
 				}
 			}
 
-			// A blank line (after trimming its terminator) is skipped
-			// silently and never counted.
+			// A blank or whitespace-only line (after trimming its
+			// terminator) is skipped silently and never counted. trimmed
+			// itself stays untrimmed of interior/leading whitespace, so a
+			// line that does hold a record keeps Raw byte-exact.
 			trimmed := strings.TrimRight(raw, "\r\n")
-			if trimmed != "" {
+			if strings.TrimSpace(trimmed) != "" {
 				rec, ok := decodeLine([]byte(trimmed))
 				if !ok {
 					skips.add(model.SkipMalformedLine)
 				} else {
 					ts := parseTimestamp(rec.Timestamp)
 					order := ts
-					if order.IsZero() {
-						// Carry the previous record's order forward so an
-						// untimestamped record stays adjacent to its
-						// neighbours in the merge sort, rather than
-						// sorting to the front of the file.
+					if order.Before(lastOrder) {
+						// Clamp to non-decreasing within this file: a
+						// record's own timestamp can invert against its
+						// predecessor's (observed live in the sidechain
+						// fixture), and letting that reorder two records
+						// from the *same* file would permute seq for real
+						// messages and could invert a tool_use/tool_result
+						// pair. A file's own line order is authoritative
+						// for records within it; only the cross-file merge
+						// may reorder by timestamp. This also subsumes the
+						// untimestamped-record case (a zero ts is always
+						// "before" any non-zero lastOrder), so an
+						// untimestamped record still carries its
+						// predecessor's order forward.
 						order = lastOrder
-					} else {
-						lastOrder = order
 					}
+					lastOrder = order
 					recs = append(recs, rawRecord{
-						// Owned copy: trimmed aliases the reader's
-						// internal buffer, which gets overwritten by the
-						// next ReadString call.
-						line:      append([]byte(nil), trimmed...),
+						line:      []byte(trimmed),
 						fileRank:  fileRank,
 						lineIndex: lineNum - 1,
 						rec:       rec,

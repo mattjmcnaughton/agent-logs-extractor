@@ -62,17 +62,18 @@ type block struct {
 	Content   json.RawMessage `json:"content"`     // tool_result: string | []block
 }
 
-// decodeLine decodes one JSONL line into a record. It first proves the line
-// is a JSON object (a malformed or non-object line is the caller's
-// SkipMalformedLine case), then unmarshals into the typed record; a decode
-// failure at either step reports false.
+// decodeLine decodes one JSONL line into a record. A line that isn't valid
+// JSON, or that decodes to a record with both Type and UUID empty (a bare
+// `null`, `{}`, or any object carrying neither field this adapter
+// recognizes), reports false: the caller counts it as SkipMalformedLine
+// rather than routing it to SkipUnknownRecordType, which exists to signal a
+// genuinely new *vendor* record type, not a broken line.
 func decodeLine(line []byte) (record, bool) {
-	var probe map[string]json.RawMessage
-	if err := json.Unmarshal(line, &probe); err != nil {
-		return record{}, false
-	}
 	var r record
 	if err := json.Unmarshal(line, &r); err != nil {
+		return record{}, false
+	}
+	if r.Type == "" && r.UUID == "" {
 		return record{}, false
 	}
 	return r, true
@@ -99,7 +100,15 @@ func blocksOf(c json.RawMessage) (blocks []block, isString bool, str string) {
 // type=="text" block with "\n" (thinking blocks contribute nothing — they
 // stay in Raw only); anything else (null, absent, unrecognized shape) is "".
 func textOf(c json.RawMessage) string {
-	blocks, isString, str := blocksOf(c)
+	return joinText(blocksOf(c))
+}
+
+// joinText is textOf's pure second half, taking an already-decoded
+// blocksOf result. A caller that has already called blocksOf for another
+// reason (routing on whether the content carries tool_result blocks, say)
+// reuses that decode instead of paying for a second one over the same
+// bytes.
+func joinText(blocks []block, isString bool, str string) string {
 	if isString {
 		return str
 	}

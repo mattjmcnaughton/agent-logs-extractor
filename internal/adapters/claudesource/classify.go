@@ -47,14 +47,32 @@ func classify(t string) kind {
 // package's exported surface even though everything else here is
 // unexported.
 const (
-	// SkipMissingMessage marks a conversational record with no extractable
-	// text: no message.content (user/assistant) and no top-level content
-	// (system).
+	// SkipMissingMessage marks a conversational record carrying neither a
+	// message object (user/assistant) nor a top-level content field
+	// (system) — no extractable text at all, regardless of whether either
+	// field is merely empty.
 	SkipMissingMessage model.SkipReason = "missing_message"
 	// SkipMissingUUID marks a conversational record with an empty uuid — it
 	// cannot become a Message without a MessageID.
 	SkipMissingUUID model.SkipReason = "missing_uuid"
-	// SkipOrphanToolResult marks a tool_result block whose tool_use_id has
-	// no earlier matching tool_use in this session.
+	// SkipOrphanToolResult marks a tool_result block whose tool_use_id is
+	// empty, or has no earlier matching tool_use in this session.
 	SkipOrphanToolResult model.SkipReason = "orphan_tool_result"
+	// SkipMissingToolUseID marks a tool_use block with an empty id. It is
+	// dropped rather than indexed under the literal key "claude:" — the
+	// nsID of an empty string — which would let it join to any tool_result
+	// that is itself missing a tool_use_id, fabricating a connection
+	// between two unrelated blocks.
+	SkipMissingToolUseID model.SkipReason = "missing_tool_use_id"
+	// SkipDuplicateMessageID marks a conversational record whose uuid
+	// collides with one already turned into a Message this session.
+	// message_id is the messages primary key (docs/technical/tdd-mvp.md);
+	// the first row wins and every later duplicate is dropped rather than
+	// emitted as a colliding row.
+	SkipDuplicateMessageID model.SkipReason = "duplicate_message_id"
+	// SkipDuplicateToolUseID marks a tool_use block whose id collides with
+	// one already turned into a ToolCall this session. tool_call_id is the
+	// tool_calls primary key; the first row wins, the same policy as
+	// SkipDuplicateMessageID.
+	SkipDuplicateToolUseID model.SkipReason = "duplicate_tool_use_id"
 )

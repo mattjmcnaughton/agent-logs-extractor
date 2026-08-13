@@ -41,7 +41,7 @@ func main() {
 	paths := defaultPaths()
 
 	// Driven adapters land here as their tickets close:
-	//   sources: claudesource (#6), codexsource (#10)
+	//   sources: claudesource (landed, #6; not yet wired here), codexsource (#10)
 	//   store:   jsonlstore   (#7)
 	//   sinks:   duckdbcli    (#9)
 	// Until then the use cases are constructed with no adapters; their Run
