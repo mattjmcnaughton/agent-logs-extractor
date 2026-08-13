@@ -19,6 +19,7 @@ vet, go test).
 | `just build` | Build binary to bin/ |
 | `just run [args]` | Run via go run |
 | `just tidy` | Tidy dependencies |
+| `just scrub-fixture` | Scrub a real vendor session tree into a committable fixture |
 | `just gate` | Fast pre-push check (fmt + vet + test) |
 | `just gate-expensive` | Full check (gate + integration) |
 
@@ -38,6 +39,9 @@ internal/
   testing/
     fakes/         # In-memory fakes for every port
     logfixture/    # Verbatim vendor log fixtures (never hand-edit)
+      scrub/       # Scrub engine: strips/replaces sensitive text in fixture JSONL
+  tools/
+    scrubfixture/  # CLI over logfixture/scrub, wired via `just scrub-fixture`
   version/
     version.go     # Version string (injectable via ldflags)
 docs/
