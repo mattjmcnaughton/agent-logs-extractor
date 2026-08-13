@@ -7,11 +7,17 @@
 // (rebuild.go), never a per-record write to the live tree.
 //
 // Guarantees, stated precisely rather than optimistically:
-//   - A rebuild that returns an error from Put or Commit — for any reason,
-//     at any point — leaves the previously committed generation exactly as
-//     it was; so does any Discard. This is the "atomic swap" the ticket
-//     asks for, and it is real: nothing under "sessions/" is touched until
-//     both renames in Commit have succeeded.
+//   - A rebuild that returns an error from Put or Commit leaves the
+//     previously committed generation exactly as it was; so does any
+//     Discard. This is the "atomic swap" the ticket asks for, and it holds
+//     with one named exception: nothing under "sessions/" is touched until
+//     both renames in Commit have succeeded, AND Commit itself refuses to
+//     attempt the swap at all once any Put on that rebuild has failed
+//     (rebuild.go's firstErr) — a generation known to be missing a doc is
+//     never allowed to overwrite a good one. The exception is the rollback
+//     path: if the swap rename fails and the rollback rename that tries to
+//     restore the previous generation *also* fails, "sessions/" is left
+//     absent rather than restored (see rebuild.go's Commit doc).
 //   - It is NOT crash-atomic. Commit renames the live "sessions" directory
 //     aside and then renames the staged directory into its place; a
 //     process killed between those two renames (SIGKILL, power loss) can
@@ -25,7 +31,10 @@
 //     (renameat2(RENAME_EXCHANGE) is Linux-only) or a symlink flip (no
 //     afero MemMapFs support, privileged on Windows). BeginRebuild sweeps
 //     any ".staging-*"/".trash-*" leftovers it finds before starting a new
-//     rebuild, so the tree self-heals on the next sync.
+//     rebuild, so the tree self-heals on the next sync. A ".orphan-*"
+//     directory is the one exception sweep leaves alone on purpose: it
+//     only appears after the rollback-failure case above, and it is a
+//     recovery pointer for a human, not sync leftovers.
 //   - No fsync: afero exposes none, and the store is derived data, so
 //     power-loss durability of a *committed* generation is not claimed
 //     either.
@@ -53,6 +62,11 @@ const (
 	sessionsDir   = "sessions"
 	stagingPrefix = ".staging-"
 	trashPrefix   = ".trash-"
+	// orphanPrefix marks a previous generation that Commit could not roll
+	// back into place after a failed swap. sweep only matches
+	// stagingPrefix/trashPrefix, so an ".orphan-" directory survives every
+	// future BeginRebuild until a human removes it by hand.
+	orphanPrefix = ".orphan-"
 
 	dirMode  os.FileMode = 0o700
 	fileMode os.FileMode = 0o600
