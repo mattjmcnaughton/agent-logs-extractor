@@ -36,6 +36,7 @@ internal/
   ports/           # Interfaces the core depends on
   adapters/
     cli/           # Cobra subcommands, one file each (thin shims)
+    claudesource/  # ConversationSource for ~/.claude/projects (Claude Code)
   testing/
     fakes/         # In-memory fakes for every port
     logfixture/    # Verbatim vendor log fixtures (never hand-edit)

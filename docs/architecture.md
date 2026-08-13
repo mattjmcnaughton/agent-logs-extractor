@@ -19,6 +19,7 @@ internal/
   ports/           # Interfaces the core depends on
   adapters/
     cli/           # Cobra subcommands (thin shims), one file each
+    claudesource/  # ConversationSource for ~/.claude/projects (Claude Code)
   testing/
     fakes/         # In-memory fakes for every port
     logfixture/    # Verbatim vendor log fixtures
@@ -30,7 +31,8 @@ internal/
 
 Concrete adapters (source parsers, the canonical store, the DuckDB exporter)
 land as their tickets close; the port and use-case shapes above are frozen
-by this ticket for them to build against.
+by this ticket for them to build against. `claudesource` (#6) is the first
+to land; `codexsource`, `jsonlstore`, and `duckdbcli` remain to come.
 
 ## Layering
 
