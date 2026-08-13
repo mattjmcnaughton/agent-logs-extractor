@@ -34,6 +34,10 @@ run *args:
 tidy:
     go mod tidy
 
+# Scrub a real vendor session tree into a committable fixture
+scrub-fixture *args:
+    go run ./internal/tools/scrubfixture {{args}}
+
 # Fast pre-push check
 gate: fmt vet test
 
