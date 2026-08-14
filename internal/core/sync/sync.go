@@ -204,9 +204,13 @@ type sessionCounts struct {
 // sr.Root, writes each into r, and accumulates one vendor's summary. counts
 // is Run's shared, global session-id -> sessionCounts map (see Run's doc):
 // two files that parse to the same session id both go into the store (the
-// later Put wins) and must only ever be counted once, with the later doc's
-// message and tool-call counts — otherwise the printed summary would not
-// reconcile against what the store actually holds. before snapshots counts
+// later Put wins) and must only ever be counted once — otherwise the printed
+// session total would not reconcile against what the store actually holds.
+// Within one call the later doc's message and tool-call counts win too. An id
+// stored by two different SourceRequests in one Run is credited to the first
+// request that stored it, with that request's counts, so Messages/ToolCalls
+// can lag the store's final doc there; Sessions still reconciles exactly, and
+// the CLI never emits a duplicate vendor. before snapshots counts
 // as this call found it, so the tally at the end can tell "an id this call
 // itself put for the first time" (credited to this vendor) apart from "an
 // id an earlier vendor in this same Run already put" (already credited
