@@ -87,30 +87,21 @@ func rebaseStoreTimestamps(t *testing.T, storeRoot string) time.Duration {
 }
 
 // parseDuckDBTime parses a timestamp as rendered by duckdb's -json output
-// mode, trying every layout DuckDB's JSON writer is known to use across
-// versions (see the TDD's C.4 version-sensitivity note) rather than
-// assuming one.
+// mode. The actual layout list (and the shapes it covers) lives in
+// parseDuckDBTimestamp (duckdbtime_test.go, no build tag) so it can be
+// unit-tested without a duckdb binary; this wrapper just adapts that pure
+// function to the *testing.T-based helpers the cookbook assertions use.
 func parseDuckDBTime(t *testing.T, v any) time.Time {
 	t.Helper()
 	s, ok := v.(string)
 	if !ok {
 		t.Fatalf("expected a string timestamp, got %T (%v)", v, v)
 	}
-	layouts := []string{
-		time.RFC3339Nano,
-		time.RFC3339,
-		"2006-01-02T15:04:05.999999999Z07:00",
-		"2006-01-02T15:04:05.999999999",
-		"2006-01-02 15:04:05.999999999Z07:00",
-		"2006-01-02 15:04:05.999999999",
+	ts, err := parseDuckDBTimestamp(s)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, layout := range layouts {
-		if ts, err := time.Parse(layout, s); err == nil {
-			return ts
-		}
-	}
-	t.Fatalf("could not parse duckdb timestamp %q with any known layout", s)
-	return time.Time{}
+	return ts
 }
 
 // assertRebasedTime asserts got equals wantBaseRFC3339 + delta, comparing
