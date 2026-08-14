@@ -170,6 +170,12 @@ func TestSyncIsIdempotent(t *testing.T) {
 		t.Fatalf("first Run: %v", err)
 	}
 	snapshot1 := readFileMap(t, filepath.Join(storeRoot, "sessions"))
+	// Guards against vacuous pass: two empty snapshots also compare equal,
+	// so without this the whole test would stay green even if every Put in
+	// ingestVendor were skipped.
+	if len(snapshot1) != 3 {
+		t.Fatalf("first run produced %d store files, want 3", len(snapshot1))
+	}
 
 	summary2, err := s.Run(ctx, req)
 	if err != nil {
@@ -298,11 +304,14 @@ func TestSyncWithAMissingVendorRootCommitsAnEmptyStore(t *testing.T) {
 
 // --- I5 --------------------------------------------------------------------
 
-// TestSyncPreviousGenerationSurvivesAFailedRun proves that a run which
-// fails partway (a bad --claude-path pointed at an unregistered vendor, in
-// this case caught before BeginRebuild even runs) leaves an earlier good
-// generation on disk exactly as it was.
-func TestSyncPreviousGenerationSurvivesAFailedRun(t *testing.T) {
+// TestSyncPreviousGenerationSurvivesAVendorRejectedBeforeRebuild proves that
+// a run rejected before BeginRebuild even runs (a --vendor value with no
+// registered source) leaves an earlier good generation on disk exactly as
+// it was. This is a real but comparatively shallow guarantee: Run's own
+// vendor-resolution loop returns before ever touching the store, so this
+// case can never exercise the deferred r.Discard() at sync.go's Run — see
+// TestSyncPreviousGenerationSurvivesAFailedCommit below for that.
+func TestSyncPreviousGenerationSurvivesAVendorRejectedBeforeRebuild(t *testing.T) {
 	storeRoot := t.TempDir()
 	s, _ := newSync(t, storeRoot)
 	ctx := context.Background()
@@ -327,5 +336,58 @@ func TestSyncPreviousGenerationSurvivesAFailedRun(t *testing.T) {
 	}
 	if got := leftovers(t, storeRoot); len(got) != 0 {
 		t.Errorf("leftover staging/trash/orphan directories after a failed run: %v", got)
+	}
+}
+
+// TestSyncPreviousGenerationSurvivesAFailedCommit proves the deferred
+// r.Discard() at sync.go's Run: a failure that occurs AFTER BeginRebuild —
+// every doc already Put into the staging tree — must still clean up the
+// staging directory and must never touch the previously committed
+// generation. It corrupts "sessions" into a regular file so
+// jsonlstore.rebuild.statLiveIsDir errors inside Commit, which is the
+// earliest point in the real adapter where a post-BeginRebuild failure can
+// be forced deterministically without reaching into unexported state.
+func TestSyncPreviousGenerationSurvivesAFailedCommit(t *testing.T) {
+	storeRoot := t.TempDir()
+	s, _ := newSync(t, storeRoot)
+	ctx := context.Background()
+
+	if _, err := s.Run(ctx, sync.Request{Sources: []sync.SourceRequest{
+		{Vendor: model.VendorClaude, Root: logfixture.ClaudeRoot()},
+	}}); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	sessionsPath := filepath.Join(storeRoot, "sessions")
+	if err := os.RemoveAll(sessionsPath); err != nil {
+		t.Fatalf("removing %s: %v", sessionsPath, err)
+	}
+	if err := os.WriteFile(sessionsPath, []byte("x"), 0o600); err != nil {
+		t.Fatalf("writing %s: %v", sessionsPath, err)
+	}
+
+	_, err := s.Run(ctx, sync.Request{Sources: []sync.SourceRequest{
+		{Vendor: model.VendorClaude, Root: logfixture.ClaudeRoot()},
+	}})
+	if err == nil {
+		t.Fatal("second Run: want an error (sessions is a regular file, not a directory), got nil")
+	}
+
+	// The killer assertion: without the deferred r.Discard() in sync.go's
+	// Run, the staging directory this run wrote every doc into survives as
+	// a leftover, because nothing else in the failure path removes it.
+	if got := leftovers(t, storeRoot); len(got) != 0 {
+		t.Errorf("leftover staging/trash/orphan directories after a failed commit: %v (defer r.Discard() should have cleaned up the staging tree)", got)
+	}
+
+	// statLiveIsDir errors before either rename in Commit runs, so the
+	// corrupted "sessions" regular file must be exactly as this test left
+	// it: proof the failed commit never touched it.
+	got, err := os.ReadFile(sessionsPath)
+	if err != nil {
+		t.Fatalf("reading %s: %v", sessionsPath, err)
+	}
+	if string(got) != "x" {
+		t.Errorf("sessions path changed during a failed commit: %q, want unchanged %q", got, "x")
 	}
 }

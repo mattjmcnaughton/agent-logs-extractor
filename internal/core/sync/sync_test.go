@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -209,6 +210,87 @@ func TestRunDeduplicatesSessionIDsInTheSummary(t *testing.T) {
 	}
 }
 
+// TestRunSkipsADocWhoseVendorDoesNotMatchItsSource pins the guard added
+// alongside the counts-accounting fix below: ports.ValidSessionDoc alone
+// accepts a doc whose Session.Vendor is internally consistent with its own
+// SessionID prefix, even when that vendor disagrees with the SourceRequest
+// the doc came from (a codex source somehow emitting a claude-prefixed
+// doc). Without this guard such a doc would sail into the store under a
+// vendor it was never ingested for.
+func TestRunSkipsADocWhoseVendorDoesNotMatchItsSource(t *testing.T) {
+	ctx := context.Background()
+	src := fakes.NewConversationSource(model.VendorCodex)
+	mismatched := model.SessionDoc{
+		Session:  model.Session{Vendor: model.VendorClaude, SessionID: "claude:x"},
+		Messages: []model.Message{{}},
+	}
+	src.Seed("/root", "/root/a.jsonl", mismatched, model.ParseStats{})
+	good := model.SessionDoc{
+		Session:   model.Session{Vendor: model.VendorCodex, SessionID: "codex:good"},
+		ToolCalls: []model.ToolCall{{}},
+	}
+	src.Seed("/root", "/root/b.jsonl", good, model.ParseStats{})
+
+	store := fakes.NewCanonicalStore()
+	s := New([]ports.ConversationSource{src}, store, slog.New(slog.DiscardHandler))
+
+	summary, err := s.Run(ctx, Request{Sources: []SourceRequest{{Vendor: model.VendorCodex, Root: "/root"}}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	want := Summary{Vendors: []VendorSummary{{Vendor: model.VendorCodex, Sessions: 1, ToolCalls: 1}}}
+	if !reflect.DeepEqual(summary, want) {
+		t.Errorf("summary = %+v, want %+v (the mismatched doc must be skipped, only the good sibling counted)", summary, want)
+	}
+	if got := store.SessionIDs(); !reflect.DeepEqual(got, []string{"codex:good"}) {
+		t.Errorf("store SessionIDs() = %v, want only [codex:good]", got)
+	}
+}
+
+// TestRunDoesNotDoubleCountASessionIDCollidingAcrossTwoSourceRequests pins
+// the counts map being hoisted from ingestVendor to Run: two SourceRequest
+// entries naming the same vendor with different roots, both producing a
+// doc for the same session id, must contribute that id to the printed
+// summary exactly once — never once per SourceRequest — because the store
+// holds exactly one doc for it (the later Put wins) regardless of how many
+// requests happened to touch it.
+func TestRunDoesNotDoubleCountASessionIDCollidingAcrossTwoSourceRequests(t *testing.T) {
+	ctx := context.Background()
+	src := fakes.NewConversationSource(model.VendorClaude)
+	first := model.SessionDoc{
+		Session:  model.Session{Vendor: model.VendorClaude, SessionID: "claude:collide"},
+		Messages: []model.Message{{}},
+	}
+	second := model.SessionDoc{
+		Session:  model.Session{Vendor: model.VendorClaude, SessionID: "claude:collide"},
+		Messages: []model.Message{{}, {}, {}},
+	}
+	src.Seed("/root1", "/root1/a.jsonl", first, model.ParseStats{})
+	src.Seed("/root2", "/root2/a.jsonl", second, model.ParseStats{})
+
+	store := fakes.NewCanonicalStore()
+	s := New([]ports.ConversationSource{src}, store, slog.New(slog.DiscardHandler))
+
+	summary, err := s.Run(ctx, Request{Sources: []SourceRequest{
+		{Vendor: model.VendorClaude, Root: "/root1"},
+		{Vendor: model.VendorClaude, Root: "/root2"},
+	}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	totalSessions := 0
+	for _, v := range summary.Vendors {
+		totalSessions += v.Sessions
+	}
+	if totalSessions != 1 {
+		t.Errorf("summary = %+v, total Sessions = %d, want 1 (the store only ever holds one doc for a colliding id)", summary, totalSessions)
+	}
+	if got := store.SessionIDs(); !reflect.DeepEqual(got, []string{"claude:collide"}) {
+		t.Errorf("store SessionIDs() = %v, want [claude:collide]", got)
+	}
+}
+
 func TestRunWithNoSessionsUnderARootReportsZero(t *testing.T) {
 	ctx := context.Background()
 	src := fakes.NewConversationSource(model.VendorClaude) // never Seed()ed: List(root) reports (nil, nil), same as a missing root (US-7)
@@ -314,6 +396,17 @@ func TestRunPutErrorAbortsAndLeavesTheStoreIntact(t *testing.T) {
 		Messages: []model.Message{{}},
 	}
 	src.Seed("/root", "/root/a.jsonl", doc, model.ParseStats{})
+	// b.jsonl sorts after a.jsonl; it must never even be Parsed if the run
+	// really aborts at a's failing Put rather than merely erroring out at
+	// Commit after processing every file (which is what a sync.go that
+	// swallows Put's error and lets the loop run to completion would still
+	// do, via jsonlstore's/the fake's own firstErr-poisons-Commit guarantee
+	// — see this test's doc header in the review).
+	second := model.SessionDoc{
+		Session:  model.Session{Vendor: model.VendorClaude, SessionID: "claude:b"},
+		Messages: []model.Message{{}},
+	}
+	src.Seed("/root", "/root/b.jsonl", second, model.ParseStats{})
 
 	store := fakes.NewCanonicalStore()
 	seedStore(t, store, model.SessionDoc{Session: model.Session{Vendor: model.VendorClaude, SessionID: "claude:existing"}})
@@ -326,11 +419,23 @@ func TestRunPutErrorAbortsAndLeavesTheStoreIntact(t *testing.T) {
 	if err == nil {
 		t.Fatal("Run: want error, got nil")
 	}
+	// Pins sync.go's own `if err := r.Put(...); err != nil { return ...,
+	// fmt.Errorf("sync: writing session %s (from %s): %w", ...) }": the
+	// wrapped message names the failing session id. A mutant that swallows
+	// Put's error (`_ = r.Put(ctx, doc)`) instead surfaces the fake store's
+	// Commit-time firstErr message ("sync: committing store rebuild: disk
+	// full"), which does not mention the session id at all.
+	if !strings.Contains(err.Error(), "claude:bad-write") {
+		t.Errorf("err = %q, want it to mention the failing session id %q", err.Error(), "claude:bad-write")
+	}
 	if !reflect.DeepEqual(summary, Summary{}) {
 		t.Errorf("summary = %+v, want zero Summary", summary)
 	}
 	if got := store.SessionIDs(); !reflect.DeepEqual(got, wantIDs) {
 		t.Errorf("store SessionIDs() = %v, want %v (untouched)", got, wantIDs)
+	}
+	if slices.Contains(src.Parsed, "/root/b.jsonl") {
+		t.Errorf("src.Parsed = %v, want it to NOT contain /root/b.jsonl (the run must abort at the failing Put, never reaching the next file)", src.Parsed)
 	}
 }
 
@@ -400,11 +505,87 @@ func TestRunWithACancelledContextDoesNotCommit(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
+	// Pins Run's own top-level `if err := ctx.Err(); err != nil { return
+	// Summary{}, err }` (sync.go:141-143), which returns ctx.Err() raw and
+	// unwrapped. If that check is deleted, Run would instead reach
+	// s.store.BeginRebuild(ctx), whose own ctx.Err() check (mirroring
+	// jsonlstore.Store.BeginRebuild) fails too — but wrapped by Run in
+	// "sync: beginning store rebuild: %w". A mutant deleting sync.go's own
+	// check would still satisfy errors.Is(err, context.Canceled) above, so
+	// this substring check is the one that actually distinguishes it.
+	if strings.Contains(err.Error(), "sync: beginning store rebuild") {
+		t.Errorf("err = %q, want Run's own pre-BeginRebuild early return (unwrapped ctx.Err()), not BeginRebuild's own failure", err.Error())
+	}
 	if !reflect.DeepEqual(summary, Summary{}) {
 		t.Errorf("summary = %+v, want zero Summary", summary)
 	}
 	if got := store.SessionIDs(); !reflect.DeepEqual(got, wantIDs) {
 		t.Errorf("store SessionIDs() = %v, want %v (untouched; a cancelled context must never reach Commit)", got, wantIDs)
+	}
+}
+
+// cancelingSource is a test-local fake — it embeds *fakes.FakeConversationSource
+// (the project's hand-written fake) and overrides only Parse, which this
+// project's conventions treat as still being a fake, not a mock. It cancels
+// a captured context.CancelFunc on its first Parse call, before delegating,
+// so the context only goes cancelled once a run is already underway rather
+// than before Run is even called.
+type cancelingSource struct {
+	*fakes.FakeConversationSource
+	cancel context.CancelFunc
+	fired  bool
+}
+
+func (c *cancelingSource) Parse(ctx context.Context, path string) (model.SessionDoc, model.ParseStats, error) {
+	if !c.fired {
+		c.fired = true
+		c.cancel()
+	}
+	return c.FakeConversationSource.Parse(ctx, path)
+}
+
+// TestRunCancelledMidRunNeverParsesTheNextFile pins ingestVendor's own
+// per-file ctx.Err() check inside the file loop (sync.go:205-207), which
+// TestRunWithACancelledContextDoesNotCommit above cannot reach: that test
+// cancels before Run is even called, so FakeCanonicalStore.BeginRebuild's
+// own ctx.Err() check produces the failure without sync.go's per-file check
+// ever running. Here, cancellation happens mid-run, during the first file's
+// Parse call; "a.jsonl" parses to a zero doc (skipped, no Put — see
+// TestRunSkipsUnstorableSessionDocsWithoutFailing) precisely so the
+// resulting abort is attributable to the loop's own ctx.Err() check rather
+// than incidentally to a Put call that would also observe the same
+// cancelled context via the store fake's own check.
+func TestRunCancelledMidRunNeverParsesTheNextFile(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	inner := fakes.NewConversationSource(model.VendorClaude)
+	inner.Seed("/root", "/root/a.jsonl", model.SessionDoc{}, model.ParseStats{})
+	good := model.SessionDoc{
+		Session:  model.Session{Vendor: model.VendorClaude, SessionID: "claude:b"},
+		Messages: []model.Message{{}},
+	}
+	inner.Seed("/root", "/root/b.jsonl", good, model.ParseStats{})
+	src := &cancelingSource{FakeConversationSource: inner, cancel: cancel}
+
+	store := fakes.NewCanonicalStore()
+	seedStore(t, store, model.SessionDoc{Session: model.Session{Vendor: model.VendorClaude, SessionID: "claude:existing"}})
+	wantIDs := store.SessionIDs()
+
+	s := New([]ports.ConversationSource{src}, store, slog.New(slog.DiscardHandler))
+
+	summary, err := s.Run(ctx, Request{Sources: []SourceRequest{{Vendor: model.VendorClaude, Root: "/root"}}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if !reflect.DeepEqual(summary, Summary{}) {
+		t.Errorf("summary = %+v, want zero Summary", summary)
+	}
+	if got := store.SessionIDs(); !reflect.DeepEqual(got, wantIDs) {
+		t.Errorf("store SessionIDs() = %v, want %v (untouched; a mid-run cancellation must never reach Commit)", got, wantIDs)
+	}
+	if slices.Contains(src.Parsed, "/root/b.jsonl") {
+		t.Errorf("Parsed = %v, want it to NOT contain /root/b.jsonl (the loop's own ctx.Err() check must catch the cancellation before the next file's Parse)", src.Parsed)
 	}
 }
 
@@ -464,6 +645,40 @@ func TestRunLogsTheSkipBreakdownAtDebug(t *testing.T) {
 	got := buf.String()
 	if !strings.Contains(got, "malformed_line") || !strings.Contains(got, "count=2") {
 		t.Errorf("log output = %q, want it to report the skip breakdown by reason", got)
+	}
+}
+
+// TestRunLogsAZeroDocOnlyAtDebug pins the zero-doc branch (sync.go:222-225):
+// a file that parses to a doc with no messages, no tool calls, and no
+// session id (pure bookkeeping, e.g. a summary-only record) must be logged
+// at debug, not warn — warn is reserved for a doc that carried real content
+// but still lacked a storable session id (ports.ValidSessionDoc's branch,
+// covered by TestRunSkipsUnstorableSessionDocsWithoutFailing). Deleting the
+// zero-doc branch entirely falls through to the ValidSessionDoc check below
+// it, which also skips the doc — but at warn instead of debug, which this
+// test would catch on the real fixture's bookkeeping-only files too.
+func TestRunLogsAZeroDocOnlyAtDebug(t *testing.T) {
+	ctx := context.Background()
+	src := fakes.NewConversationSource(model.VendorClaude)
+	src.Seed("/root", "/root/bookkeeping.jsonl", model.SessionDoc{}, model.ParseStats{})
+	good := model.SessionDoc{
+		Session:  model.Session{Vendor: model.VendorClaude, SessionID: "claude:good"},
+		Messages: []model.Message{{}},
+	}
+	src.Seed("/root", "/root/good.jsonl", good, model.ParseStats{})
+
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	store := fakes.NewCanonicalStore()
+	s := New([]ports.ConversationSource{src}, store, log)
+
+	if _, err := s.Run(ctx, Request{Sources: []SourceRequest{{Vendor: model.VendorClaude, Root: "/root"}}}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if got := buf.String(); got != "" {
+		t.Errorf("log output at WARN = %q, want empty (a zero doc is normal bookkeeping, not a warning)", got)
 	}
 }
 
