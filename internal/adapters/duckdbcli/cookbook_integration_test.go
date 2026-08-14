@@ -41,7 +41,14 @@ func rebaseStoreTimestamps(t *testing.T, storeRoot string) time.Duration {
 	if err != nil {
 		t.Fatalf("parsing fixtureOldestRFC3339: %v", err)
 	}
-	delta := time.Now().Add(-25 * time.Hour).Sub(fixtureOldest)
+	// Truncate the delta to whole microseconds. DuckDB's TIMESTAMPTZ is
+	// microsecond-precision while Go's time.Time is nanosecond-precision, so
+	// a delta carrying sub-microsecond digits produces store timestamps
+	// DuckDB physically cannot round-trip: it truncates on the way in, and
+	// every rebased assertion then fails by a few hundred nanoseconds. The
+	// fixture base timestamps are millisecond-precision, so a microsecond
+	// delta keeps base+delta exactly representable on both sides.
+	delta := time.Now().Add(-25 * time.Hour).Sub(fixtureOldest).Truncate(time.Microsecond)
 
 	claudeDir := filepath.Join(storeRoot, "sessions", "claude")
 	entries, err := os.ReadDir(claudeDir)
@@ -114,8 +121,13 @@ func assertRebasedTime(t *testing.T, got any, wantBaseRFC3339 string, delta time
 	if err != nil {
 		t.Fatalf("parsing want base time %q: %v", wantBaseRFC3339, err)
 	}
-	want := base.Add(delta).UTC()
-	gotTime := parseDuckDBTime(t, got).UTC()
+	// Compare at microsecond granularity: that is DuckDB's actual TIMESTAMPTZ
+	// resolution, so asserting anything finer would be asserting a property
+	// the storage layer does not have. rebaseStoreTimestamps already truncates
+	// the delta to whole microseconds, so this is belt-and-braces rather than
+	// the primary defence.
+	want := base.Add(delta).UTC().Truncate(time.Microsecond)
+	gotTime := parseDuckDBTime(t, got).UTC().Truncate(time.Microsecond)
 	if !gotTime.Equal(want) {
 		t.Errorf("timestamp = %v, want %v (base %s + delta %v)", gotTime, want, wantBaseRFC3339, delta)
 	}
