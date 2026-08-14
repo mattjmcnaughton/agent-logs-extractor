@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -227,6 +229,44 @@ func TestSyncCommandPrintsTheSummary(t *testing.T) {
 	want := "claude: 1 session, 2 messages, 0 tool calls, 0 records skipped\n"
 	if out.String() != want {
 		t.Errorf("stdout = %q, want %q", out.String(), want)
+	}
+}
+
+// TestSyncCommandPropagatesTheCommandContext pins `cmd.Context()` being
+// threaded into deps.Sync.Run (sync.go:36) rather than some detached
+// context: with a cancelled root context, sync.Sync.Run's own ctx.Err()
+// check must observe the cancellation and abort before ever writing to
+// stdout. Ctrl-C support for `sync` depends entirely on this wiring — a
+// swap to context.Background() would pass every other test in this suite
+// silently.
+func TestSyncCommandPropagatesTheCommandContext(t *testing.T) {
+	src := fakes.NewConversationSource(model.VendorClaude)
+	src.Seed("/claude", "/claude/a.jsonl", model.SessionDoc{
+		Session:  model.Session{Vendor: model.VendorClaude, SessionID: "claude:a"},
+		Messages: []model.Message{{}, {}},
+	}, model.ParseStats{})
+
+	s := sync.New([]ports.ConversationSource{src}, fakes.NewCanonicalStore(), slog.New(slog.DiscardHandler))
+	deps := Deps{
+		Sync:         s,
+		DefaultRoots: map[model.Vendor]string{model.VendorClaude: "/claude"},
+	}
+
+	root := NewRoot(deps)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"sync", "--vendor", "claude"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := root.ExecuteContext(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ExecuteContext: err = %v, want context.Canceled", err)
+	}
+	if out.String() != "" {
+		t.Errorf("stdout = %q, want empty (a cancelled context must abort before printing a summary)", out.String())
 	}
 }
 

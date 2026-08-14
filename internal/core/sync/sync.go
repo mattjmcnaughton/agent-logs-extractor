@@ -167,9 +167,21 @@ func (s *Sync) Run(ctx context.Context, req Request) (Summary, error) {
 	}
 	defer func() { _ = r.Discard() }()
 
+	// counts is keyed by session id, shared across every vendor in this
+	// Request, so dedup is global — matching the store's own global
+	// session-id key — rather than per-vendor-call-local. Two SourceRequest
+	// entries can legitimately name the same vendor twice (two roots), and
+	// nothing stops a source from emitting a doc whose Session.Vendor
+	// disagrees with the SourceRequest it came from (guarded against
+	// separately, below, but defense-in-depth costs nothing here): either
+	// way, a session id that more than one ingestVendor call Puts must only
+	// ever contribute to one vendor's printed tally, matching the one doc
+	// it actually leaves in the store.
+	counts := make(map[string][2]int) // session id -> {messages, toolCalls}
+
 	summary := Summary{Vendors: make([]VendorSummary, 0, len(items))}
 	for _, it := range items {
-		vs, err := s.ingestVendor(ctx, r, it.src, it.req)
+		vs, err := s.ingestVendor(ctx, r, it.src, it.req, counts)
 		if err != nil {
 			return Summary{}, err
 		}
@@ -184,15 +196,21 @@ func (s *Sync) Run(ctx context.Context, req Request) (Summary, error) {
 }
 
 // ingestVendor lists and parses every session file src reports under
-// sr.Root, writes each into r, and accumulates one vendor's summary.
-// Session accounting is keyed by session id, not by file: two files that
-// parse to the same session id both go into the store (the later Put
-// wins), but must only ever be counted once, with the later doc's message
-// and tool-call counts — otherwise the printed summary would not reconcile
-// against what the store actually holds.
-func (s *Sync) ingestVendor(ctx context.Context, r ports.StoreRebuild, src ports.ConversationSource, sr SourceRequest) (VendorSummary, error) {
+// sr.Root, writes each into r, and accumulates one vendor's summary. counts
+// is Run's shared, global session-id -> (messages, toolCalls) map (see
+// Run's doc): two files that parse to the same session id both go into the
+// store (the later Put wins) and must only ever be counted once, with the
+// later doc's message and tool-call counts — otherwise the printed summary
+// would not reconcile against what the store actually holds. before
+// snapshots counts as this call found it, so the tally at the end can tell
+// "an id this call itself put for the first time" (credited to this
+// vendor) apart from "an id an earlier vendor in this same Run already put"
+// (already credited there; not re-counted here even though this call's Put
+// just overwrote it in the store).
+func (s *Sync) ingestVendor(ctx context.Context, r ports.StoreRebuild, src ports.ConversationSource, sr SourceRequest, counts map[string][2]int) (VendorSummary, error) {
 	vs := VendorSummary{Vendor: sr.Vendor}
-	counts := make(map[string][2]int) // session id -> {messages, toolCalls}
+	before := maps.Clone(counts)
+	own := make(map[string]bool) // ids this call Put, regardless of whether they pre-existed in counts
 	skips := model.SkipCounts{}
 
 	paths, err := src.List(ctx, sr.Root)
@@ -228,6 +246,11 @@ func (s *Sync) ingestVendor(ctx context.Context, r ports.StoreRebuild, src ports
 				"vendor", doc.Session.Vendor, "session_id", doc.Session.SessionID, "path", p)
 			continue
 		}
+		if doc.Session.Vendor != sr.Vendor {
+			s.log.Warn("sync: session doc's vendor does not match the source it came from; skipping it",
+				"source_vendor", sr.Vendor, "doc_vendor", doc.Session.Vendor, "session_id", doc.Session.SessionID, "path", p)
+			continue
+		}
 		if _, dup := counts[doc.Session.SessionID]; dup {
 			s.log.Warn("sync: two session logs produced the same session id; the later one wins",
 				"vendor", sr.Vendor, "session_id", doc.Session.SessionID, "path", p)
@@ -237,10 +260,18 @@ func (s *Sync) ingestVendor(ctx context.Context, r ports.StoreRebuild, src ports
 			return VendorSummary{}, fmt.Errorf("sync: writing session %s (from %s): %w", doc.Session.SessionID, p, err)
 		}
 		counts[doc.Session.SessionID] = [2]int{len(doc.Messages), len(doc.ToolCalls)}
+		own[doc.Session.SessionID] = true
 	}
 
-	vs.Sessions = len(counts)
-	for _, c := range counts {
+	for id := range own {
+		if _, existedBefore := before[id]; existedBefore {
+			// Already credited to an earlier vendor in this Run; this
+			// call's Put overwrote the store entry (the later Put still
+			// wins there), but must not double-count it in the summary.
+			continue
+		}
+		vs.Sessions++
+		c := counts[id]
 		vs.Messages += c[0]
 		vs.ToolCalls += c[1]
 	}
