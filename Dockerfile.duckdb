@@ -30,8 +30,18 @@ FROM golang:1.25-bookworm
 ARG DUCKDB_VERSION=1.4.0
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends unzip ca-certificates curl just \
+    && apt-get install -y --no-install-recommends unzip ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
+
+# `just` is NOT packaged for Debian bookworm — it lives in Ubuntu's universe,
+# which is why the workflow's ubuntu-latest jobs can apt-get it and this image
+# cannot ("E: Unable to locate package just"). Use the upstream installer, but
+# pinned with --tag so this is version-controlled the same way DUCKDB_VERSION
+# is, rather than tracking whatever "latest" happens to be. 1.21.0 matches the
+# version ubuntu-latest's apt ships, so both CI jobs run the same just.
+ARG JUST_VERSION=1.21.0
+RUN curl -fsSL https://just.systems/install.sh \
+      | bash -s -- --tag "${JUST_VERSION}" --to /usr/local/bin
 
 RUN curl -fsSL -o /tmp/duckdb.zip \
       "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip" \
