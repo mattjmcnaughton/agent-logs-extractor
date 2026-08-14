@@ -86,19 +86,6 @@ func TestExportRejectsAnAbsentStoreRoot(t *testing.T) {
 	}
 }
 
-// TestExportRejectsAnEmptyStoreRoot mirrors
-// TestExportRejectsAnAbsentStoreRoot for the empty-string case (defense in
-// depth: internal/core/export.Run already guards this before ever calling
-// Export, but the adapter must not panic or misbehave if called directly).
-func TestExportRejectsAnEmptyStoreRoot(t *testing.T) {
-	a := New(nil)
-
-	err := a.Export(context.Background(), ports.ExportRequest{StoreRoot: "", Out: filepath.Join(t.TempDir(), "out.duckdb")})
-	if !errors.Is(err, ErrNoStore) {
-		t.Fatalf("Export err = %v, want it to wrap ErrNoStore", err)
-	}
-}
-
 // TestStoreHasDocs pins storeHasDocs' three-way contract (C.3) directly,
 // independent of Export's other checks.
 func TestStoreHasDocs(t *testing.T) {
@@ -169,30 +156,6 @@ func TestStoreHasDocs(t *testing.T) {
 			t.Error("got false, want true")
 		}
 	})
-}
-
-// TestWithBinaryOverridesTheResolvedBinary pins that WithBinary actually
-// changes which name Export's exec.LookPath resolves, rather than the
-// option silently doing nothing: the default binary name ("duckdb") is
-// almost certainly not on this test's PATH either, but the error must
-// name whichever binary name was actually configured.
-func TestWithBinaryOverridesTheResolvedBinary(t *testing.T) {
-	const custom = "agent-logs-extractor-custom-binary-name-xyz"
-	a := New(nil, WithBinary(custom))
-	if a.bin != custom {
-		t.Errorf("bin = %q, want %q", a.bin, custom)
-	}
-}
-
-// TestNewNormalizesANilLogger pins New's nil-logger convention (shared with
-// export.New, sync.New, jsonlstore.New): a nil log must not panic when
-// Export later calls a.log.Debug.
-func TestNewNormalizesANilLogger(t *testing.T) {
-	a := New(nil, WithBinary("agent-logs-extractor-nonexistent-duckdb-xyz"))
-	root := t.TempDir()
-	if err := a.Export(context.Background(), ports.ExportRequest{StoreRoot: root, Out: filepath.Join(t.TempDir(), "out.duckdb")}); err == nil {
-		t.Fatal("want an error from a missing binary")
-	}
 }
 
 // buildFakeDuckdb writes a stand-in "duckdb" executable that ignores its

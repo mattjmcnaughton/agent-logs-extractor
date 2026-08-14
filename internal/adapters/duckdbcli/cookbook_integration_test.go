@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattjmcnaughton/agent-logs-extractor/internal/adapters/duckdbcli"
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/model"
 )
 
@@ -197,14 +196,14 @@ func TestCookbookQueries(t *testing.T) {
 	}
 
 	t.Run("Q1 verbatim binds and returns 0 rows", func(t *testing.T) {
-		rows := queryJSON(t, duckdbBin, out, duckdbcli.CookbookQuery1)
+		rows := queryJSON(t, duckdbBin, out, CookbookQuery1)
 		if len(rows) != 0 {
 			t.Errorf("got %d rows, want 0: %v", len(rows), rows)
 		}
 	})
 
 	t.Run("Q1 substituted fixture-sidechain returns 2 rows in order", func(t *testing.T) {
-		q := strings.Replace(duckdbcli.CookbookQuery1, "'fetch-context'", "'fixture-sidechain'", 1)
+		q := strings.Replace(CookbookQuery1, "'fetch-context'", "'fixture-sidechain'", 1)
 		rows := queryJSON(t, duckdbBin, out, q)
 		if len(rows) != 2 {
 			t.Fatalf("got %d rows, want 2: %v", len(rows), rows)
@@ -224,7 +223,7 @@ func TestCookbookQueries(t *testing.T) {
 	})
 
 	t.Run("Q1 substituted fixture-project returns 0 rows (proves the time predicate filters)", func(t *testing.T) {
-		q := strings.Replace(duckdbcli.CookbookQuery1, "'fetch-context'", "'fixture-project'", 1)
+		q := strings.Replace(CookbookQuery1, "'fetch-context'", "'fixture-project'", 1)
 		rows := queryJSON(t, duckdbBin, out, q)
 		if len(rows) != 0 {
 			t.Errorf("got %d rows, want 0 (fixture-project's only user message rebases to 25h ago, an hour outside the INTERVAL 1 DAY window — deliberately not exactly on the boundary, so this stays robust rather than flaky): %v", len(rows), rows)
@@ -232,14 +231,14 @@ func TestCookbookQueries(t *testing.T) {
 	})
 
 	t.Run("Q2 verbatim binds and returns 0 rows", func(t *testing.T) {
-		rows := queryJSON(t, duckdbBin, out, duckdbcli.CookbookQuery2)
+		rows := queryJSON(t, duckdbBin, out, CookbookQuery2)
 		if len(rows) != 0 {
 			t.Errorf("got %d rows, want 0: %v", len(rows), rows)
 		}
 	})
 
 	t.Run("Q2 substituted echo-hello returns 2 rows, excluding the Agent call and the unrelated Bash call", func(t *testing.T) {
-		q := strings.Replace(duckdbcli.CookbookQuery2, "'%git push%'", "'%echo hello%'", 1)
+		q := strings.Replace(CookbookQuery2, "'%git push%'", "'%echo hello%'", 1)
 		rows := queryJSON(t, duckdbBin, out, q)
 		if len(rows) != 2 {
 			t.Fatalf("got %d rows, want 2: %v", len(rows), rows)
@@ -267,7 +266,7 @@ func TestCookbookQueries(t *testing.T) {
 	})
 
 	t.Run("Q3 verbatim returns 3 rows, one per project, all counts 1", func(t *testing.T) {
-		rows := queryJSON(t, duckdbBin, out, duckdbcli.CookbookQuery3)
+		rows := queryJSON(t, duckdbBin, out, CookbookQuery3)
 		if len(rows) != 3 {
 			t.Fatalf("got %d rows, want 3: %v", len(rows), rows)
 		}

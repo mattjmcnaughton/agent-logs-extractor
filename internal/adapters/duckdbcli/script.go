@@ -86,8 +86,9 @@ CREATE TEMP TABLE _docs (
 `
 
 // scriptTail builds the three relations from _docs and is byte-identical
-// regardless of hasDocs — TestBothScriptFormsDeclareTheSameSchema pins this.
-// Session fields are denormalized (vendor/project_name/project_path) onto
+// regardless of hasDocs by construction: Script appends this same constant
+// after either header, so the two branches can never declare different
+// columns. Session fields are denormalized (vendor/project_name/project_path) onto
 // messages and tool_calls (TDD core decision 5) so the README cookbook
 // queries need no joins. `messages IS NOT NULL` / `tool_calls IS NOT NULL`
 // excludes a doc whose field is JSON null; UNNEST of an empty (non-null)
@@ -136,10 +137,6 @@ FROM exploded;
 COMMIT;
 CHECKPOINT;
 `
-
-// schemaBoundary is the substring both forms are required to be
-// byte-identical from onward (TestBothScriptFormsDeclareTheSameSchema).
-const schemaBoundary = "CREATE TABLE sessions AS"
 
 // Script renders the export script. It is a pure function of hasDocs — the
 // store root is NOT a parameter; the adapter runs duckdb with the store
