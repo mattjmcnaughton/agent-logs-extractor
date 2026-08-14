@@ -3,12 +3,19 @@
 # needed at test-run time.
 #
 # Network access is required only while *building* this image (installing
-# duckdb and just); the CI job that uses it (.github/workflows/ci.yml's
-# "Gate (expensive, containerized duckdb)") runs the resulting container
-# with `docker run --network none`, so the actual test execution is
-# network-isolated end to end — the "minimum honest form" of a
-# containerized duckdb test: baked-in tooling, isolated execution, nothing
-# faked about duckdb's own behavior.
+# duckdb and just, and downloading Go modules into the image's module
+# cache below); the CI job that uses it (.github/workflows/ci.yml's "Gate
+# (expensive, containerized duckdb)") runs the resulting container with
+# `docker run --network none`, so the actual test execution — including
+# `go test`'s own module resolution, which reads the cache warmed at build
+# time rather than reaching the network — is network-isolated end to end —
+# the "minimum honest form" of a containerized duckdb test: baked-in
+# tooling, isolated execution, nothing faked about duckdb's own behavior.
+#
+# The justfile's test-integration-container recipe and this Dockerfile's
+# CI caller (.github/workflows/ci.yml) both run the built image with no
+# `-v`/`--mount` at all, so nothing at run time can shadow the module
+# cache warmed into the image below.
 #
 # This Dockerfile has never been built or run in this repo's authoring
 # environment (no working container daemon there — `docker info` fails);
@@ -37,6 +44,20 @@ RUN curl -fsSL -o /tmp/duckdb.zip \
 RUN curl -fsSL https://just.systems/install.sh | bash -s -- --to /usr/local/bin
 
 WORKDIR /workspace
+
+# Warm the module cache at build time, while network access is still
+# available (the run step below is `docker run --network none`). Copying
+# only go.mod/go.sum first also gives this layer good Docker layer
+# caching: it only re-runs when dependencies actually change, not on every
+# source edit.
+#
+# No USER/HOME change happens anywhere in this image (we stay root
+# throughout), so `go mod download` here and the `go test` it warms for at
+# `docker run` time resolve the same default GOMODCACHE
+# (/root/go/pkg/mod, under $HOME=/root) — nothing resets it in between.
+COPY go.mod go.sum ./
+RUN go mod download
+
 COPY . .
 
 ENV ALX_REQUIRE_DUCKDB=1
