@@ -21,7 +21,8 @@ package invariants
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/model"
@@ -226,8 +227,16 @@ func Observe(doc model.SessionDoc) []Observation {
 		for c := range cwds {
 			examples = append(examples, c)
 		}
-		sort.Strings(examples)
-		acc.set(KindCwdDrift, len(cwds), examples)
+		slices.Sort(examples)
+		// Inlined accumulator.set (P4: it had exactly this one caller):
+		// KindCwdDrift's natural unit is "distinct values seen", set
+		// outright rather than incremented one at a time like add's Count.
+		o := acc.entry(KindCwdDrift)
+		o.Count = len(cwds)
+		if len(examples) > maxExamples {
+			examples = examples[:maxExamples]
+		}
+		o.Examples = examples
 	}
 
 	return acc.result()
@@ -253,7 +262,6 @@ func MergeObservations(sets ...[]Observation) []Observation {
 // is written exactly once.
 type accumulator struct {
 	byKind map[string]*Observation
-	order  []string
 }
 
 func newAccumulator() *accumulator {
@@ -265,7 +273,6 @@ func (a *accumulator) entry(kind string) *Observation {
 	if !ok {
 		o = &Observation{Kind: kind}
 		a.byKind[kind] = o
-		a.order = append(a.order, kind)
 	}
 	return o
 }
@@ -276,18 +283,6 @@ func (a *accumulator) add(kind, example string) {
 	if len(o.Examples) < maxExamples {
 		o.Examples = append(o.Examples, example)
 	}
-}
-
-// set overwrites kind's count/examples outright (capped), for a signal
-// (like KindCwdDrift) whose natural unit is "distinct values seen", not
-// "occurrences added one at a time".
-func (a *accumulator) set(kind string, count int, examples []string) {
-	o := a.entry(kind)
-	o.Count = count
-	if len(examples) > maxExamples {
-		examples = examples[:maxExamples]
-	}
-	o.Examples = examples
 }
 
 func (a *accumulator) merge(o Observation) {
@@ -301,9 +296,9 @@ func (a *accumulator) merge(o Observation) {
 }
 
 func (a *accumulator) result() []Observation {
-	sort.Strings(a.order)
-	out := make([]Observation, 0, len(a.order))
-	for _, k := range a.order {
+	kinds := slices.Sorted(maps.Keys(a.byKind))
+	out := make([]Observation, 0, len(kinds))
+	for _, k := range kinds {
 		out = append(out, *a.byKind[k])
 	}
 	return out
