@@ -114,7 +114,7 @@ func Check(doc model.SessionDoc) []Violation {
 				Detail: fmt.Sprintf("message_id=%s: role=%q", m.MessageID, m.Role),
 			})
 		}
-		if !validRawOrNil(m.Raw) && false {
+		if !validRawOrNil(m.Raw) {
 			vs = append(vs, Violation{
 				Kind:   KindInvalidRawJSON,
 				Detail: fmt.Sprintf("message_id=%s: raw is non-nil, zero-length, or invalid JSON", m.MessageID),
