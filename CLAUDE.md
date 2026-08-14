@@ -10,56 +10,55 @@ vet, go test).
 
 | Command | Purpose |
 | ------- | ------- |
-| `just fmt` | Check formatting |
-| `just fmt-fix` | Fix formatting |
+| `just fmt` / `just fmt-fix` | Check / fix formatting |
 | `just vet` | Run go vet |
-| `just test` | Run unit tests |
-| `just test-integration` | Run integration tests |
-| `just test-integration-container` | Run integration tests in `Dockerfile.duckdb`, network-isolated |
-| `just test-contract` | Run the opt-in contract tier against a live `~/.claude` |
-| `just test-e2e` | Run the opt-in black-box e2e suite |
-| `just test-e2e-container` | Run the e2e suite in `Dockerfile.duckdb`, network-isolated |
-| `just test-all` | Run all tests |
-| `just build` | Build binary to bin/ |
-| `just run [args]` | Run via go run |
+| `just test` | Unit tests (no build tag) |
+| `just test-integration` | Integration tests (`//go:build integration`) |
+| `just test-integration-container` | Integration tests inside `Dockerfile.duckdb`, network-isolated |
+| `just test-all` | Unit + integration |
+| `just test-contract` | Contract tests (`//go:build contract`); **requires `ALX_CONTRACT_CLAUDE_PATH`** — bare invocation SKIPs by design, never defaults to a real `~/.claude`. Opt-in, never gated. |
+| `just test-e2e` | Black-box e2e suite (`//go:build e2e`) against the compiled binary |
+| `just test-e2e-container` | E2E suite inside `Dockerfile.duckdb`, network-isolated |
+| `just build` | Build binary to `bin/` |
+| `just run [args]` | Run via `go run` |
 | `just tidy` | Tidy dependencies |
 | `just scrub-fixture` | Scrub a real vendor session tree into a committable fixture |
-| `just gate` | Fast pre-push check (fmt + vet + test) |
-| `just gate-expensive` | Full check (gate + integration) |
+| `just gate` | Fast pre-push check: `fmt` + `vet` + `test` |
+| `just gate-expensive` | Full check: `gate` + `test-integration` |
 
-## Project Structure
+## Architecture in one paragraph
+
+The **core** (`internal/core/`) contains pure use cases (`sync`, `export`)
+and the unified data model (`model`), with zero infrastructure imports.
+**Ports** (`internal/ports/`) are small interfaces the core depends on:
+`ConversationSource`, `CanonicalStore`/`StoreRebuild`, `Exporter`.
+**Adapters** (`internal/adapters/`) implement those ports — `claudesource`
+(Claude Code log parsing), `jsonlstore` (the JSONL canonical store over
+afero), `duckdbcli` (the DuckDB CLI subprocess), plus the driving `cli`
+adapter (cobra). **Wiring** in `cmd/agent-logs-extractor/main.go` is the
+only file that imports every concrete adapter; it reads the environment,
+constructs adapters, injects them into use cases, and hands those to the
+cobra root. The core never imports `os`, `net/http`, `os/exec`, or any
+third-party SDK. **Read `docs/architecture.md` before adding a new module,
+port, or adapter.**
+
+## Project Structure (high level)
 
 ```
-cmd/agent-logs-extractor/
-  main.go          # Wiring: env → adapters → use cases → cobra root
+cmd/agent-logs-extractor/main.go   # Wiring: env -> adapters -> use cases -> cobra root
 internal/
-  core/
-    model/         # Unified data model (SessionDoc/Session/Message/ToolCall)
-    sync/          # Sync use case
-    export/        # Export use case
-  ports/           # Interfaces the core depends on
-  adapters/
-    cli/           # Cobra subcommands, one file each (thin shims)
-    claudesource/  # ConversationSource for ~/.claude/projects (Claude Code)
-    jsonlstore/    # CanonicalStore over afero: JSONL store + atomic swap
-    duckdbcli/     # Exporter over the duckdb CLI subprocess (os/exec)
-  testing/
-    fakes/         # In-memory fakes for every port
-    invariants/    # Structural checks + drift observations over a SessionDoc (contract tier's engine)
-    logfixture/    # Verbatim vendor log fixtures (never hand-edit)
-      scrub/       # Scrub engine: strips/replaces sensitive text in fixture JSONL
-  tools/
-    scrubfixture/  # CLI over logfixture/scrub, wired via `just scrub-fixture`
+  core/                            # Pure: model, sync, export — zero infra imports
+  ports/                           # Interfaces the core depends on
+  adapters/                        # cli, claudesource, jsonlstore, duckdbcli
+  testing/                         # fakes, invariants (contract tier's engine), logfixture
+  tools/scrubfixture/              # CLI over logfixture/scrub
   version/
-    version.go     # Version string (injectable via ldflags)
-tests/
-  e2e/             # Black-box tests against the compiled binary (//go:build e2e)
-docs/
-  adrs/            # Architecture Decision Records
-  architecture.md  # System architecture overview
-  acceptance.md    # Observable contract; every AC-* ID maps 1:1 to an e2e test
-  development.md   # Dev setup and common tasks
+tests/e2e/                         # Black-box tests against the compiled binary (build tag e2e)
+docs/                              # product/, technical/, adrs/, architecture, testing, acceptance, development
 ```
+
+Full layout, port table, use-case table, and the nine core decisions live
+in `docs/architecture.md`.
 
 ## Key Conventions
 
@@ -74,30 +73,48 @@ docs/
 - **Wiring only in `main.go`.** It is the only file that imports every
   concrete adapter.
 - **No config file.** Behavior is controlled by flags, plus
-  `AGENT_LOGS_EXTRACTOR_HOME` / `AGENT_LOGS_EXTRACTOR_LOG_LEVEL` read in
-  wiring.
+  `AGENT_LOGS_EXTRACTOR_HOME` / `AGENT_LOGS_EXTRACTOR_LOG_LEVEL` /
+  `XDG_DATA_HOME` read once in wiring. Precedence for the data directory:
+  `AGENT_LOGS_EXTRACTOR_HOME` wins outright if set (XDG is not even
+  consulted); else an absolute `XDG_DATA_HOME`; else `~/.local/share`.
+  `~/.claude`/`~/.codex` always resolve from `AGENT_LOGS_EXTRACTOR_HOME` (or
+  the real home directory), never from `XDG_DATA_HOME`.
 - **Fakes over mocks.** Hand-written in-memory fakes live in
   `internal/testing/fakes/`; tests assert on outcomes, never on call
   sequences.
 - **Fixtures are verbatim ground truth.** `internal/testing/logfixture/`
   holds real (scrubbed) vendor log files — never hand-edit or move them.
-- **Integration tests** use the `//go:build integration` build tag.
-  `internal/adapters/duckdbcli`'s integration tests additionally require a
-  real `duckdb` CLI on `PATH` and skip (not fail) when it's absent; CI runs
-  them with `ALX_REQUIRE_DUCKDB=1` (making a missing binary a hard failure
-  there) in both a native job and a containerized job — see
-  `docs/architecture.md`.
+  Two documented exceptions live in `docs/testing.md`.
+- **Codex is not implemented.** `--codex-path` is accepted and stored but
+  never consulted; `sync --vendor codex` errors naming what is available.
+- **Four test tiers:** unit (no tag) / integration (`integration`) /
+  contract (`contract`, opt-in, requires `ALX_CONTRACT_CLAUDE_PATH`) / e2e
+  (`e2e`, opt-in, black-box against the compiled binary). Every `AC-*` ID in
+  `docs/acceptance.md` maps 1:1 to exactly one **discharging test** — 31 at
+  the e2e tier, the rest at unit/integration/container — enforced by the
+  untagged `TestACCoverage` (`tests/e2e/coverage_test.go`). Contract and
+  e2e never run as part of `just gate`/`just gate-expensive`.
 - **Version** is defined as `"dev"` by default and overridden at build time
   with `-ldflags "-X github.com/mattjmcnaughton/agent-logs-extractor/internal/version.Version=x.y.z"`.
-- **Four test tiers:** unit (no tag) / integration (`integration`) / contract
-  (`contract`, opt-in, reads a live `~/.claude`) / e2e (`e2e`, black-box
-  against the compiled binary). Every `AC-*` ID in `docs/acceptance.md` maps
-  1:1 to exactly one e2e test, enforced by the untagged `TestACCoverage`
-  (`tests/e2e/coverage_test.go`). Contract and e2e never run as part of
-  `just gate`/`just gate-expensive` — see `docs/development.md`.
 
 ## More Information
 
-- `docs/architecture.md` — read before adding new modules or changing project structure
-- `docs/acceptance.md` — observable contract; read before changing user-visible behavior
-- `docs/development.md` — read for environment setup, debugging, or common tasks
+Progressive disclosure — pull in the relevant doc when the task touches it:
+
+- `README.md` — user-facing command surface, file layout, sandboxing, query
+  cookbook.
+- `docs/architecture.md` — hexagonal layout, port/adapter tables, use-case
+  wiring, the nine core decisions. **Read before adding a new module, port,
+  or adapter.**
+- `docs/testing.md` — four-tier pyramid, fakes conventions, fixture
+  provenance, the AC-ID <-> test mapping. **Read before writing tests
+  beyond a plain unit test.**
+- `docs/acceptance.md` — observable contract; every `AC-*` ID maps 1:1 to
+  exactly one discharging test. **Read before changing user-visible
+  behavior.**
+- `docs/development.md` — environment setup, debugging, common tasks.
+- `docs/technical/tdd-mvp.md` — the nine core decisions in full, vendor
+  format mappings, still-open questions. **Read before revisiting a
+  settled design decision.**
+- `docs/adrs/` — Architecture Decision Records. Currently empty; the TDD's
+  nine core decisions are the de-facto decision record.
