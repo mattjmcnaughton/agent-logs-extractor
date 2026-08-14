@@ -6,7 +6,7 @@ Tools like Claude Code and Codex record every conversation to disk in vendor-spe
 
 Everything stays on your machine. Logs contain prompts, code, and command output — nothing is ever sent anywhere.
 
-> **Status: pre-MVP.** This README describes the target MVP surface. See `docs/product/prd-mvp.md` for scope and `docs/technical/tdd-mvp.md` for the design.
+See `docs/product/prd-mvp.md` for scope and `docs/technical/tdd-mvp.md` for the design.
 
 ## Install
 
@@ -58,11 +58,11 @@ agent-logs-extractor export duckdb                      # → ~/.local/share/age
 agent-logs-extractor export duckdb --out ./logs.duckdb
 ```
 
-The export is a full snapshot, rebuilt each run. Session fields (`vendor`, `project_name`, `project_path`) are denormalized onto `messages` and `tool_calls`, so the common queries need no joins. Additional sinks (parquet, sqlite, …) hang off the same sink port later.
+The export is a full snapshot, rebuilt each run: it shells out to the `duckdb` CLI, so it requires that binary on `PATH` — `sync` never does. If it's missing, `export duckdb` fails with an install hint pointing at [duckdb.org](https://duckdb.org/docs/installation/); if the export itself fails for any other reason, re-run with `--log-level debug` to see the generated SQL. Session fields (`vendor`, `project_name`, `project_path`) are denormalized onto `messages` and `tool_calls`, so the common queries need no joins. Additional sinks (parquet, sqlite, …) hang off the same sink port later.
 
 ## Querying
 
-Point the DuckDB CLI at the export — there is deliberately no in-tool query command.
+Point the DuckDB CLI at the export — there is deliberately no in-tool query command. Timestamp columns (`started_at`, `ended_at`, `created_at`) are `TIMESTAMPTZ`, so time comparisons like `now() - INTERVAL 1 DAY` below are unambiguous UTC instants regardless of your local timezone; `raw` and `arguments` are DuckDB's native `JSON` type, so they're queryable with `json_extract`/`->>`, not just `LIKE`.
 
 ```
 duckdb ~/.local/share/agent-logs-extractor/export/logs.duckdb
@@ -118,15 +118,23 @@ Full schema and the vendor→model field mappings live in `docs/technical/tdd-mv
   export/logs.duckdb              # default `export duckdb` output
 ```
 
-There is no config file — behavior is controlled by flags, with sensible defaults.
+That default root is actually `$XDG_DATA_HOME/agent-logs-extractor/` when `XDG_DATA_HOME` is set to an absolute path, falling back to `~/.local/share/agent-logs-extractor/` otherwise — so on a machine with no `XDG_DATA_HOME` set, nothing changes. `~/.claude` and `~/.codex` are unaffected either way; see Sandboxing below for the full precedence. There is no config file — behavior is controlled by flags, with sensible defaults.
 
 ## Sandboxing
 
-Set `AGENT_LOGS_EXTRACTOR_HOME` to redirect every path (store, exports, and the default `~/.claude` / `~/.codex` lookups) under a custom root. Useful for tests and parallel runs.
+Set `AGENT_LOGS_EXTRACTOR_HOME` to redirect every path — store, exports, *and* the default `~/.claude` / `~/.codex` lookups — under a custom root. Useful for tests and parallel runs.
 
 ```
 AGENT_LOGS_EXTRACTOR_HOME=/tmp/sandbox agent-logs-extractor sync
 ```
+
+Full precedence for the store/export data directory:
+
+1. `AGENT_LOGS_EXTRACTOR_HOME`, when set, wins outright — `<home>/.local/share/agent-logs-extractor/...` — and `XDG_DATA_HOME` is not even consulted. This is what keeps a sandboxed or test run hermetic even on a machine that also happens to export `XDG_DATA_HOME`.
+2. Otherwise, `XDG_DATA_HOME` wins if it's set to an absolute path: `$XDG_DATA_HOME/agent-logs-extractor/...`.
+3. Otherwise, `~/.local/share/agent-logs-extractor/...`.
+
+`~/.claude` and `~/.codex` always resolve from `AGENT_LOGS_EXTRACTOR_HOME` (or the real home directory) — never from `XDG_DATA_HOME`, which governs *this tool's own* data directory, not where a third-party tool keeps its logs.
 
 ## Logging
 

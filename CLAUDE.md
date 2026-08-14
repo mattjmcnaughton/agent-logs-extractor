@@ -38,6 +38,7 @@ internal/
     cli/           # Cobra subcommands, one file each (thin shims)
     claudesource/  # ConversationSource for ~/.claude/projects (Claude Code)
     jsonlstore/    # CanonicalStore over afero: JSONL store + atomic swap
+    duckdbcli/     # Exporter over the duckdb CLI subprocess (os/exec)
   testing/
     fakes/         # In-memory fakes for every port
     logfixture/    # Verbatim vendor log fixtures (never hand-edit)
@@ -73,6 +74,11 @@ docs/
 - **Fixtures are verbatim ground truth.** `internal/testing/logfixture/`
   holds real (scrubbed) vendor log files — never hand-edit or move them.
 - **Integration tests** use the `//go:build integration` build tag.
+  `internal/adapters/duckdbcli`'s integration tests additionally require a
+  real `duckdb` CLI on `PATH` and skip (not fail) when it's absent; CI runs
+  them with `ALX_REQUIRE_DUCKDB=1` (making a missing binary a hard failure
+  there) in both a native job and a containerized job — see
+  `docs/architecture.md`.
 - **Version** is defined as `"dev"` by default and overridden at build time
   with `-ldflags "-X github.com/mattjmcnaughton/agent-logs-extractor/internal/version.Version=x.y.z"`.
 

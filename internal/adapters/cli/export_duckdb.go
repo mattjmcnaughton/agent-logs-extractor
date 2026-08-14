@@ -2,6 +2,7 @@ package cli
 
 import (
 	"cmp"
+	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -20,7 +21,11 @@ func newExportDuckDBCmd(deps Deps) *cobra.Command {
 			// Sink derives from the command's own name, matching Use
 			// below, rather than repeating "duckdb" as a second literal
 			// that export.New's Name()-keyed lookup must also match.
-			return deps.Export.Run(cmd.Context(), export.Request{Sink: cmd.Name(), Out: resolved})
+			if err := deps.Export.Run(cmd.Context(), export.Request{Sink: cmd.Name(), Out: resolved}); err != nil {
+				return err
+			}
+			_, err := fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\n", resolved)
+			return err
 		},
 	}
 
