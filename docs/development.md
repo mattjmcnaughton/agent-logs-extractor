@@ -48,6 +48,14 @@ Tests use the stdlib `testing` package:
 - Unit tests live alongside the code they test (e.g. `internal/cli/example_test.go`)
 - Integration tests use the `//go:build integration` build tag
 - Run integration tests with `just test-integration`
+- `internal/adapters/duckdbcli`'s integration tests additionally need a real
+  `duckdb` CLI on `PATH`; they skip (not fail) when it's absent, so a plain
+  `just test-integration`/`just gate-expensive` run without duckdb installed
+  reports those tests as skipped rather than passing or failing. Set
+  `ALX_REQUIRE_DUCKDB=1` to turn that skip into a hard failure (what CI's
+  native `gate-expensive` job does). `just test-integration-container` runs
+  the same tier inside a container with duckdb baked in (`Dockerfile.duckdb`),
+  for when you don't want to install duckdb locally at all.
 
 ## Building with a Version
 
