@@ -10,14 +10,19 @@ permissions:
   contents: read
 
 env:
-  # Pinned DuckDB CLI release. Reproducibility here comes from pinning the
-  # *version* in the download URL — see the sha256 note on the install
-  # steps below for why this workflow does not also pin a checksum yet.
+  # Pinned DuckDB CLI release, verified against a pinned sha256 (see the
+  # "Install duckdb" step below) rather than trusting the version pin
+  # alone.
   DUCKDB_VERSION: "1.4.0"
 
 jobs:
   gate:
     name: Gate
+    # Deliberately kept alongside gate-expensive-native even though it is a
+    # strict subset of it (fmt+vet+test, no duckdb install): it gives fast
+    # feedback on the common failure (a unit/vet/fmt break) without waiting
+    # on a duckdb download, so a contributor doesn't pay that cost to learn
+    # gofmt caught a typo.
     runs-on: ubuntu-latest
 
     steps:
@@ -73,21 +78,15 @@ jobs:
         # README's human-facing hint, wrong for a reproducible CI job), and
         # a third-party GitHub Action adds supply-chain surface this repo
         # would rather not carry. So: download the pinned release zip
-        # directly from the version in DUCKDB_VERSION.
-        #
-        # sha256: the plan asks for a pinned checksum here, but nobody
-        # authoring this ticket could reach GitHub releases to compute one
-        # (see the ticket's report). Fabricating a hash would be worse than
-        # having none — a wrong hash fails every future run with a
-        # "corruption" error that reads like a supply-chain attack, not a
-        # typo. So this step only *computes and echoes* the hash below.
-        # TODO(#9 follow-up): once this job has run for real, copy the
-        # sha256sum output from the log into a `sha256sum -c` step here.
+        # directly from the version in DUCKDB_VERSION, and verify it
+        # against a checksum observed from a real run of this job (the
+        # sha256sum output of a previous "Install duckdb" step) before
+        # trusting it. Bump this checksum alongside DUCKDB_VERSION whenever
+        # that version changes.
         run: |
           curl -fsSL -o /tmp/duckdb.zip \
             "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip"
-          echo "duckdb_cli-linux-amd64.zip sha256 (TODO: pin this in a follow-up):"
-          sha256sum /tmp/duckdb.zip
+          echo "559398da12db9223fb0663ae65a365b2740e4e35abf009a81350a3f57e175ecc  /tmp/duckdb.zip" | sha256sum -c -
           sudo unzip -o /tmp/duckdb.zip -d /usr/local/bin
           sudo chmod +x /usr/local/bin/duckdb
           rm /tmp/duckdb.zip
@@ -127,4 +126,6 @@ jobs:
         run: docker build --build-arg DUCKDB_VERSION="${DUCKDB_VERSION}" -f Dockerfile.duckdb -t agent-logs-extractor-duckdb-test .
 
       - name: Run the integration tier inside the container, network-isolated
-        run: docker run --rm --network none -e ALX_REQUIRE_DUCKDB=1 agent-logs-extractor-duckdb-test
+        # No -e ALX_REQUIRE_DUCKDB=1 here: Dockerfile.duckdb already sets it
+        # as an image ENV, so passing it again here would only duplicate it.
+        run: docker run --rm --network none agent-logs-extractor-duckdb-test

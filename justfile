@@ -42,10 +42,12 @@ scrub-fixture *args:
 # inside it, network-isolated at run time (Dockerfile.duckdb). Requires a
 # working docker daemon; not part of `gate`/`gate-expensive` because it
 # needs docker, not just Go — CI's "Gate (expensive, containerized duckdb)"
-# job runs the same two commands directly.
+# job runs the same two commands directly. No --build-arg DUCKDB_VERSION
+# (Dockerfile.duckdb's ARG already defaults to the same pinned version) and
+# no -e ALX_REQUIRE_DUCKDB=1 (the image's own ENV already sets it).
 test-integration-container:
-    docker build --build-arg DUCKDB_VERSION=1.4.0 -f Dockerfile.duckdb -t agent-logs-extractor-duckdb-test .
-    docker run --rm --network none -e ALX_REQUIRE_DUCKDB=1 agent-logs-extractor-duckdb-test
+    docker build -f Dockerfile.duckdb -t agent-logs-extractor-duckdb-test .
+    docker run --rm --network none agent-logs-extractor-duckdb-test
 
 # Fast pre-push check
 gate: fmt vet test

@@ -21,27 +21,24 @@
 # environment (no working container daemon there — `docker info` fails);
 # CI is its first real execution. See the ticket's report for details.
 #
-# sha256: see the matching install step in .github/workflows/ci.yml for why
-# this Dockerfile does not pin a checksum for the downloaded release zip
-# (TODO there once one has been observed from a real run).
+# sha256: the release zip is verified against a checksum observed from a
+# real run of .github/workflows/ci.yml's matching install step — bump this
+# alongside DUCKDB_VERSION whenever that version changes.
 
 FROM golang:1.25-bookworm
 
 ARG DUCKDB_VERSION=1.4.0
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends unzip ca-certificates curl \
+    && apt-get install -y --no-install-recommends unzip ca-certificates curl just \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL -o /tmp/duckdb.zip \
       "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip" \
-    && echo "duckdb_cli-linux-amd64.zip sha256 (TODO: pin once observed from a real run):" \
-    && sha256sum /tmp/duckdb.zip \
+    && echo "559398da12db9223fb0663ae65a365b2740e4e35abf009a81350a3f57e175ecc  /tmp/duckdb.zip" | sha256sum -c - \
     && unzip -o /tmp/duckdb.zip -d /usr/local/bin \
     && chmod +x /usr/local/bin/duckdb \
     && rm /tmp/duckdb.zip
-
-RUN curl -fsSL https://just.systems/install.sh | bash -s -- --to /usr/local/bin
 
 WORKDIR /workspace
 
@@ -51,10 +48,10 @@ WORKDIR /workspace
 # caching: it only re-runs when dependencies actually change, not on every
 # source edit.
 #
-# No USER/HOME change happens anywhere in this image (we stay root
-# throughout), so `go mod download` here and the `go test` it warms for at
-# `docker run` time resolve the same default GOMODCACHE
-# (/root/go/pkg/mod, under $HOME=/root) — nothing resets it in between.
+# No GOPATH/GOMODCACHE override happens anywhere in this image, so `go mod
+# download` here and the `go test` it warms for at `docker run` time
+# resolve the same default GOMODCACHE (/go/pkg/mod — the official golang
+# images set GOPATH=/go) — nothing resets it in between.
 COPY go.mod go.sum ./
 RUN go mod download
 
