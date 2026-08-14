@@ -300,6 +300,35 @@ func TestObserveCwdDrift(t *testing.T) {
 	}
 }
 
+// TestObserveCapsExamplesOnAdd guards accumulator.add's own maxExamples
+// cap (invariants.go's add path, exercised here via
+// KindDanglingParentMessageID) independently of
+// TestMergeObservationsSumsCountsAndCapsExamples, which only exercises
+// merge's cap. A real corpus produced Count=2402 for one Kind; a regressed
+// cap on add would dump every one of those into a report meant to hold at
+// most maxExamples.
+func TestObserveCapsExamplesOnAdd(t *testing.T) {
+	doc := baseDoc()
+	for i := 0; i < 5; i++ {
+		doc.Messages = append(doc.Messages, model.Message{
+			MessageID:       string(rune('a'+i)) + "-claude:m",
+			SessionID:       "claude:sess-1",
+			Seq:             i + 1,
+			Role:            model.RoleUser,
+			CreatedAt:       time.Unix(int64(i+2), 0),
+			ParentMessageID: "claude:ghost",
+		})
+	}
+	got := invariants.Observe(doc)
+	o, ok := obsFor(t, got, invariants.KindDanglingParentMessageID)
+	if !ok || o.Count != 5 {
+		t.Fatalf("Observe() = %v, want %s with count 5", got, invariants.KindDanglingParentMessageID)
+	}
+	if len(o.Examples) != 3 {
+		t.Errorf("Examples = %v, want exactly 3 (capped at maxExamples), got %d", o.Examples, len(o.Examples))
+	}
+}
+
 func TestObserveNoCwdDriftWhenCwdIsStable(t *testing.T) {
 	doc := baseDoc()
 	doc.Messages = append(doc.Messages, model.Message{
@@ -313,6 +342,35 @@ func TestObserveNoCwdDriftWhenCwdIsStable(t *testing.T) {
 	got := invariants.Observe(doc)
 	if _, ok := obsFor(t, got, invariants.KindCwdDrift); ok {
 		t.Fatalf("Observe() = %v, want no %s (both messages share one cwd)", got, invariants.KindCwdDrift)
+	}
+}
+
+// TestObserveCwdDriftCapsExamples guards the cwd-drift path's own
+// maxExamples cap (invariants.go's Observe, formerly reached through
+// accumulator.set before P4 inlined it) with more distinct cwds than
+// maxExamples, independent of TestMergeObservationsSumsCountsAndCapsExamples
+// (merge's cap) and TestObserveCapsExamplesOnAdd (add's cap) — the same
+// large-corpus risk A3 flags for add applies here too.
+func TestObserveCwdDriftCapsExamples(t *testing.T) {
+	doc := baseDoc()                                         // m1 already carries cwd "/tmp/proj"
+	cwds := []string{"/tmp/a", "/tmp/b", "/tmp/c", "/tmp/d"} // + "/tmp/proj" = 5 distinct
+	for i, cwd := range cwds {
+		doc.Messages = append(doc.Messages, model.Message{
+			MessageID: string(rune('a'+i)) + "-claude:m",
+			SessionID: "claude:sess-1",
+			Seq:       i + 1,
+			Role:      model.RoleUser,
+			CreatedAt: time.Unix(int64(i+2), 0),
+			Raw:       json.RawMessage(`{"cwd":"` + cwd + `"}`),
+		})
+	}
+	got := invariants.Observe(doc)
+	o, ok := obsFor(t, got, invariants.KindCwdDrift)
+	if !ok || o.Count != 5 {
+		t.Fatalf("Observe() = %v, want %s with count 5 (true distinct-cwd count, uncapped)", got, invariants.KindCwdDrift)
+	}
+	if len(o.Examples) != 3 {
+		t.Errorf("Examples = %v, want exactly 3 (capped at maxExamples), got %d", o.Examples, len(o.Examples))
 	}
 }
 
