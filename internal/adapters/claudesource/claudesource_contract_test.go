@@ -1,20 +1,25 @@
 //go:build contract
 
 // Package claudesource_test's contract file is the opt-in tier that parses
-// the developer's *live* ~/.claude (never a fixture) and asserts the
+// a live ~/.claude (or a fixture tree standing in for one) and asserts the
 // structural invariants every SessionDoc must satisfy, then reports drift
 // observations — the early-warning system for vendor format drift
 // (docs/technical/tdd-mvp.md core decision 8). It is read-only end to end:
 // only Source.List and Source.Parse are ever called here, never a
 // CanonicalStore, so this tier can never write anything, anywhere.
 //
-// It skips (never fails) when there is nothing to read: no root, no
-// root/projects, or zero session files listed. That is deliberate — a
-// contributor with no live Claude Code history, or CI (which never sets
-// ALX_CONTRACT_CLAUDE_PATH and has no ~/.claude of its own), must see this
-// tier skip cleanly rather than fail. See docs/development.md for how to
-// point it at a real or fixture tree, and why `just test-contract` must
-// never be run against a sandbox's own harness transcript.
+// It skips (never fails) when there is nothing to read: ALX_CONTRACT_CLAUDE_PATH
+// unset, no root, no root/projects, or zero session files listed. The first
+// of those is deliberate and mechanical (A5): this tier never defaults to
+// AGENT_LOGS_EXTRACTOR_HOME or the real $HOME/.claude, so a contributor with
+// no live Claude Code history, or CI (which never sets
+// ALX_CONTRACT_CLAUDE_PATH), sees this tier skip cleanly rather than
+// silently reading whatever ~/.claude happens to exist. It does, however,
+// FAIL if the resolved root does yield session files but ingests zero
+// sessions (or sessions but zero messages) — total ingestion loss is never
+// a silent zero-row pass. See docs/development.md for how to point it at a
+// real or fixture tree, and why `just test-contract` must never be run
+// bare against a sandbox's own harness transcript.
 package claudesource_test
 
 import (
@@ -44,7 +49,7 @@ const contractPathEnv = "ALX_CONTRACT_CLAUDE_PATH"
 // -count=1 ./...); DO NOT run it against this sandbox's own ~/.claude
 // (see the package doc and docs/development.md).
 func TestClaudeSourceContractAgainstLiveLogs(t *testing.T) {
-	root, source := resolveContractRoot()
+	root, source := resolveContractRoot(t)
 
 	if _, err := os.Stat(root); err != nil {
 		t.Skipf("claude contract: root %s (resolved from %s) does not exist; set %s to point at a real or fixture ~/.claude to run this tier (%v)", root, source, contractPathEnv, err)
@@ -66,53 +71,69 @@ func TestClaudeSourceContractAgainstLiveLogs(t *testing.T) {
 		t.Skipf("claude contract: %s (resolved from %s) has a projects/ directory but List found no session files; set %s to point at a tree with real sessions", root, source, contractPathEnv)
 	}
 
-	var (
-		violations       []invariants.Violation
-		observationSets  [][]invariants.Observation
-		unreadable       []string
-		sessions         int
-		messages         int
-		toolCalls        int
-		seenSessionFiles = map[string]string{} // session id -> first file that produced it
-	)
-
+	run := newContractRun()
 	for _, p := range paths {
-		parseOneFile(t, ctx, src, p, &violations, &observationSets, &unreadable, &sessions, &messages, &toolCalls, seenSessionFiles)
+		run.parseFile(t, ctx, src, p)
 	}
 
-	merged := invariants.MergeObservations(observationSets...)
+	merged := invariants.MergeObservations(run.observationSets...)
 
 	t.Logf("claude contract: root=%s (resolved from %s), files scanned=%d, files unreadable=%d, sessions=%d, messages=%d, tool_calls=%d",
-		root, source, len(paths), len(unreadable), sessions, messages, toolCalls)
+		root, source, len(paths), len(run.unreadable), run.sessions, run.messages, run.toolCalls)
 	for _, o := range merged {
 		t.Logf("claude contract: observation %s: count=%d examples=%v", o.Kind, o.Count, o.Examples)
 	}
 
-	for _, v := range violations {
+	for _, v := range run.violations {
 		t.Errorf("claude contract: violation %s: %s", v.Kind, v.Detail)
+	}
+
+	// A4: Observe being never-fatal is settled (docs/technical/tdd-mvp.md
+	// core decision 8) and stays that way — but total ingestion loss is not
+	// a judgment call. A vendor-format change that silently drops every
+	// record (a renamed "uuid" field, a renamed "assistant" type literal,
+	// ...) must fail this tier, not report sessions=0/messages=0 and exit
+	// 0 as if there were simply nothing to find.
+	if len(paths) > 0 && run.sessions == 0 {
+		t.Errorf("claude contract: %d session file(s) scanned but 0 sessions ingested — total ingestion loss (vendor format drift?) must fail this tier, not pass silently", len(paths))
+	}
+	if run.sessions > 0 && run.messages == 0 {
+		t.Errorf("claude contract: %d session(s) ingested but 0 messages — total message loss (vendor format drift?) must fail this tier, not pass silently", run.sessions)
 	}
 }
 
-// parseOneFile parses one session file under a per-file defer/recover, so a
+// contractRun accumulates one contract-tier run's tallies and findings
+// across every session file parsed. Replaces what was previously six
+// separate pointer parameters (*[]Violation, *[][]Observation, *[]string,
+// three *int) threaded through a free function — T1: the caller already
+// declared this exact state as one `var (...)` block, so making it a
+// struct with a parseFile method collapses the parameter list to one line
+// and turns every `*x++`/`*x = append(...)` back into a plain field
+// access.
+type contractRun struct {
+	violations       []invariants.Violation
+	observationSets  [][]invariants.Observation
+	unreadable       []string
+	sessions         int
+	messages         int
+	toolCalls        int
+	seenSessionFiles map[string]string // session id -> first file that produced it
+}
+
+func newContractRun() *contractRun {
+	return &contractRun{seenSessionFiles: map[string]string{}}
+}
+
+// parseFile parses one session file under a per-file defer/recover, so a
 // panic anywhere in Parse is caught, reported with the offending path, and
 // does not abort the rest of the run — the contract tier's own "no panic"
 // invariant is enforced by this harness, not by invariants.Check (a pure
 // function over an already-built SessionDoc has nothing left to panic on).
-func parseOneFile(
-	t *testing.T,
-	ctx context.Context,
-	src *claudesource.Source,
-	path string,
-	violations *[]invariants.Violation,
-	observationSets *[][]invariants.Observation,
-	unreadable *[]string,
-	sessions, messages, toolCalls *int,
-	seenSessionFiles map[string]string,
-) {
+func (r *contractRun) parseFile(t *testing.T, ctx context.Context, src *claudesource.Source, path string) {
 	t.Helper()
 	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("claude contract: PANIC parsing %s: %v", path, r)
+		if rec := recover(); rec != nil {
+			t.Errorf("claude contract: PANIC parsing %s: %v", path, rec)
 		}
 	}()
 
@@ -122,15 +143,15 @@ func parseOneFile(
 		// exactly like sync.go's own FilesUnreadable accounting, never
 		// fatal to the run.
 		t.Logf("claude contract: %s could not be read; skipping (counted, not fatal): %v", path, err)
-		*unreadable = append(*unreadable, path)
+		r.unreadable = append(r.unreadable, path)
 		return
 	}
 
 	for _, v := range invariants.Check(doc) {
 		v.Detail = fmt.Sprintf("%s: %s", path, v.Detail)
-		*violations = append(*violations, v)
+		r.violations = append(r.violations, v)
 	}
-	*observationSets = append(*observationSets, invariants.Observe(doc))
+	r.observationSets = append(r.observationSets, invariants.Observe(doc))
 
 	if len(stats.Skipped) > 0 {
 		skipObs := make([]invariants.Observation, 0, len(stats.Skipped))
@@ -141,7 +162,7 @@ func parseOneFile(
 				Examples: []string{path},
 			})
 		}
-		*observationSets = append(*observationSets, skipObs)
+		r.observationSets = append(r.observationSets, skipObs)
 	}
 
 	if doc.Session.SessionID == "" {
@@ -149,37 +170,35 @@ func parseOneFile(
 		// own "empty doc" leniency; nothing to tally or dedup-check.
 		return
 	}
-	*sessions++
-	*messages += len(doc.Messages)
-	*toolCalls += len(doc.ToolCalls)
+	r.sessions++
+	r.messages += len(doc.Messages)
+	r.toolCalls += len(doc.ToolCalls)
 
-	if first, dup := seenSessionFiles[doc.Session.SessionID]; dup {
-		*observationSets = append(*observationSets, []invariants.Observation{{
+	if first, dup := r.seenSessionFiles[doc.Session.SessionID]; dup {
+		r.observationSets = append(r.observationSets, []invariants.Observation{{
 			Kind:     invariants.KindDuplicateSessionID,
 			Count:    1,
 			Examples: []string{fmt.Sprintf("%s also produced by %s", path, first)},
 		}})
 	} else {
-		seenSessionFiles[doc.Session.SessionID] = path
+		r.seenSessionFiles[doc.Session.SessionID] = path
 	}
 }
 
-// resolveContractRoot mirrors main.go's defaultPaths() precedence for
-// ~/.claude — AGENT_LOGS_EXTRACTOR_HOME wins when set, else the user's real
-// home directory — with contractPathEnv layered on top as the one
-// additional override this test-only tier accepts, so it can be pointed at
-// a fixture tree in a sandbox with no live ~/.claude at all.
-func resolveContractRoot() (root, source string) {
-	if p := os.Getenv(contractPathEnv); p != "" {
-		return p, contractPathEnv
+// resolveContractRoot resolves the root this tier reads. A5: it SKIPS
+// outright — never reads anything — unless contractPathEnv is explicitly
+// set. Earlier, an unset contractPathEnv fell through to
+// AGENT_LOGS_EXTRACTOR_HOME, else the real $HOME/.claude: a documented
+// "DO NOT run this bare" warning (see the package doc, docs/development.md,
+// and justfile) with a default that walks straight into exactly that. This
+// makes the warning mechanical instead of a comment a developer has to
+// remember: `just test-contract` run with no override now SKIPs rather
+// than reading whatever ~/.claude happens to exist in the sandbox.
+func resolveContractRoot(t *testing.T) (root, source string) {
+	t.Helper()
+	p := os.Getenv(contractPathEnv)
+	if p == "" {
+		t.Skipf("claude contract: %s is unset; this tier refuses to default to a live ~/.claude. Set %s=$(mktemp -d) to exercise the skip path, or %s=$PWD/internal/testing/logfixture/claude (or your own real ~/.claude) to exercise the found-logs path", contractPathEnv, contractPathEnv, contractPathEnv)
 	}
-
-	if home := os.Getenv("AGENT_LOGS_EXTRACTOR_HOME"); home != "" {
-		return filepath.Join(home, ".claude"), "AGENT_LOGS_EXTRACTOR_HOME"
-	}
-	h, err := os.UserHomeDir()
-	if err != nil {
-		h = "."
-	}
-	return filepath.Join(h, ".claude"), "$HOME"
+	return p, contractPathEnv
 }
