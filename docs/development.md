@@ -43,12 +43,19 @@ just gate-expensive
 
 ## Testing
 
-Tests use the stdlib `testing` package:
+Tests use the stdlib `testing` package, in four tiers
+(`docs/technical/tdd-mvp.md`'s "Testing" section; `docs/acceptance.md` §1.5
+for the acceptance-criteria mapping):
 
-- Unit tests live alongside the code they test (e.g. `internal/cli/example_test.go`)
-- Integration tests use the `//go:build integration` build tag
-- Run integration tests with `just test-integration`
-- `internal/adapters/duckdbcli`'s integration tests additionally need a real
+- **Unit** (no build tag) — `just test`. Lives alongside the code it tests
+  (e.g. `internal/adapters/cli/sync_test.go`), plus
+  `internal/testing/invariants/invariants_test.go` (the contract tier's
+  engine, table-driven and provable without a live `~/.claude`) and
+  `tests/e2e/coverage_test.go` (`TestACCoverage`, deliberately **untagged**
+  so it gates: it only parses `docs/acceptance.md` and the Go source under
+  `tests/e2e/`, no subprocess, no binary, no duckdb).
+- **Integration** (`//go:build integration`) — `just test-integration`.
+  `internal/adapters/duckdbcli`'s integration tests additionally need a real
   `duckdb` CLI on `PATH`; they skip (not fail) when it's absent, so a plain
   `just test-integration`/`just gate-expensive` run without duckdb installed
   reports those tests as skipped rather than passing or failing. Set
@@ -56,6 +63,71 @@ Tests use the stdlib `testing` package:
   native `gate-expensive` job does). `just test-integration-container` runs
   the same tier inside a container with duckdb baked in (`Dockerfile.duckdb`),
   for when you don't want to install duckdb locally at all.
+- **Contract** (`//go:build contract`, opt-in) — `just test-contract`. See
+  "Contract tier" below.
+- **E2E** (`//go:build e2e`, opt-in) — `just test-e2e`. See "E2E tier" below.
+
+Contract and e2e are never part of `just gate` or `just gate-expensive` —
+see the comment above `gate` in the `justfile` for why, and
+`docs/acceptance.md` §12 (R4).
+
+### Contract tier
+
+`internal/adapters/claudesource/claudesource_contract_test.go` parses a
+*live* `~/.claude` — resolved the same way wiring resolves it
+(`AGENT_LOGS_EXTRACTOR_HOME`, else `$HOME`) — and asserts the structural
+invariants every `SessionDoc` must satisfy
+(`internal/testing/invariants.Check`), then reports drift observations
+(`invariants.Observe`) via `t.Log`: unknown record types, malformed lines,
+dangling links, a session's `cwd` changing mid-conversation
+(`cwd_drift` — instruments `docs/technical/tdd-mvp.md`'s open question 2),
+and more. It is **strictly read-only**: only `Source.List`/`Source.Parse`
+are ever called, never a `CanonicalStore`.
+
+It **skips, never fails**, when there is nothing to read: no root, no
+`root/projects`, or `List` finds zero session files. This is deliberate —
+CI never sets a live `~/.claude` for this tier, and neither does most
+contributors' sandboxes.
+
+`ALX_CONTRACT_CLAUDE_PATH` (**test-only** — never read by the CLI or by
+wiring, never document it in `README.md`, never expose it as a flag)
+overrides the root this tier reads. Use it to point the tier at a fixture
+tree instead of a real `~/.claude`, e.g. to prove it actually finds and
+reports on real logs without a developer's own history:
+
+```sh
+ALX_CONTRACT_CLAUDE_PATH=internal/testing/logfixture/claude just test-contract
+```
+
+**Never point `ALX_CONTRACT_CLAUDE_PATH` at another session's or another
+person's real Claude Code history without their consent** — this tier only
+reads, but a transcript is still someone's private conversation log.
+
+### E2E tier
+
+`tests/e2e/` runs the compiled binary as a subprocess and asserts on its
+observable behavior — black-box: no `internal/core` or `internal/adapters`
+import is permitted there, only `internal/testing/logfixture`. Every test is
+named `TestAC_<CATEGORY>_<NN>_<ShortName>`, mapped 1:1 to a criterion in
+`docs/acceptance.md`. Set `$ALXBIN` to reuse a pre-built binary; otherwise
+`TestMain` builds one itself.
+
+A criterion marked **†** in `docs/acceptance.md` needs a real `duckdb`
+binary; those tests skip (not fail) without one, same as the integration
+tier's duckdb-dependent tests. To make every `†` criterion actually run:
+
+```sh
+# with duckdb installed locally
+just test-e2e
+
+# or, no local duckdb install needed:
+just test-e2e-container
+```
+
+`just test-e2e-container` reuses `Dockerfile.duckdb` (no second image),
+overriding its `CMD` at run time to run `just test-e2e` instead, network-
+isolated (`--network none`) — this is also `docs/acceptance.md`'s
+AC-SCOPE-03 (nothing reaches the network at run time).
 
 ## Building with a Version
 

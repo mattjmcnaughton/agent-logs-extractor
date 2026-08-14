@@ -15,6 +15,10 @@ vet, go test).
 | `just vet` | Run go vet |
 | `just test` | Run unit tests |
 | `just test-integration` | Run integration tests |
+| `just test-integration-container` | Run integration tests in `Dockerfile.duckdb`, network-isolated |
+| `just test-contract` | Run the opt-in contract tier against a live `~/.claude` |
+| `just test-e2e` | Run the opt-in black-box e2e suite |
+| `just test-e2e-container` | Run the e2e suite in `Dockerfile.duckdb`, network-isolated |
 | `just test-all` | Run all tests |
 | `just build` | Build binary to bin/ |
 | `just run [args]` | Run via go run |
@@ -41,15 +45,19 @@ internal/
     duckdbcli/     # Exporter over the duckdb CLI subprocess (os/exec)
   testing/
     fakes/         # In-memory fakes for every port
+    invariants/    # Structural checks + drift observations over a SessionDoc (contract tier's engine)
     logfixture/    # Verbatim vendor log fixtures (never hand-edit)
       scrub/       # Scrub engine: strips/replaces sensitive text in fixture JSONL
   tools/
     scrubfixture/  # CLI over logfixture/scrub, wired via `just scrub-fixture`
   version/
     version.go     # Version string (injectable via ldflags)
+tests/
+  e2e/             # Black-box tests against the compiled binary (//go:build e2e)
 docs/
   adrs/            # Architecture Decision Records
   architecture.md  # System architecture overview
+  acceptance.md    # Observable contract; every AC-* ID maps 1:1 to an e2e test
   development.md   # Dev setup and common tasks
 ```
 
@@ -81,8 +89,15 @@ docs/
   `docs/architecture.md`.
 - **Version** is defined as `"dev"` by default and overridden at build time
   with `-ldflags "-X github.com/mattjmcnaughton/agent-logs-extractor/internal/version.Version=x.y.z"`.
+- **Four test tiers:** unit (no tag) / integration (`integration`) / contract
+  (`contract`, opt-in, reads a live `~/.claude`) / e2e (`e2e`, black-box
+  against the compiled binary). Every `AC-*` ID in `docs/acceptance.md` maps
+  1:1 to exactly one e2e test, enforced by the untagged `TestACCoverage`
+  (`tests/e2e/coverage_test.go`). Contract and e2e never run as part of
+  `just gate`/`just gate-expensive` — see `docs/development.md`.
 
 ## More Information
 
 - `docs/architecture.md` — read before adding new modules or changing project structure
+- `docs/acceptance.md` — observable contract; read before changing user-visible behavior
 - `docs/development.md` — read for environment setup, debugging, or common tasks
