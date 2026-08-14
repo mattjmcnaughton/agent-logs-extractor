@@ -25,23 +25,6 @@ splitting the contract tier's *engine* into a pure, unit-tested package
 (`internal/testing/invariants`, §7 below) is what makes it provable at all
 in an environment with no live vendor history.
 
-## The pyramid
-
-```
-       /\
-      /  \    e2e          tests/e2e/                compiled binary,
-     /----\                build tag e2e              black-box
-    /      \   contract    *_contract_test.go         real ~/.claude, opt-in
-   /        \              build tag contract
-  /----------\  integration *_integration_test.go     one real adapter +
- /            \             build tag integration      local dependency
-/--------------\ unit       *_test.go                 pure + use cases
-                                                        against fakes
-```
-
-Counts are illustrative; the shape — wide unit base, narrow tip — is the
-goal.
-
 ## Build tags
 
 | Tag | Meaning | Run by | Gated? |
@@ -52,16 +35,18 @@ goal.
 | `e2e` | Execs the compiled binary as a subprocess | `just test-e2e` / `just test-e2e-container` | **No — never gated** |
 
 `contract` and `e2e` are excluded from `just gate` and `just gate-expensive`
-on purpose (`justfile:91-96`'s comment above `gate`): `test-contract` needs
-a developer's real vendor history to mean anything at all — a contributor
-with no Claude Code history of their own must never see it fail — and
-`test-e2e` needs a locally-built binary and, for its `†`-marked criteria, a
-real `duckdb`, costs neither `gate`'s "fast" nor `gate-expensive`'s "needs
-only Go + a pinned duckdb CLI" promise was ever meant to carry. Both stay
-opt-in, run by name. The one addition to the gated, untagged suite is
-`TestACCoverage` (§10 below) — pure doc/AST parsing, no subprocess, no
-binary, no duckdb, so it costs nothing to gate on even though the e2e tier
-itself does not run.
+on purpose — `justfile`'s comment above `gate` explains why, verbatim:
+
+> `gate`/`gate-expensive` deliberately do NOT run test-contract or test-e2e
+> (do not "helpfully" add them here): test-contract needs a developer's
+> real vendor history to mean anything, and test-e2e needs a locally-built
+> binary and (for its † criteria) a real duckdb — costs `gate`'s "fast"
+> and `gate-expensive`'s existing "needs only Go + a pinned duckdb CLI"
+> promises were never meant to carry. Both stay opt-in, run by name.
+
+The one addition to the gated, untagged suite is `TestACCoverage` (§10
+below) — pure doc/AST parsing, no subprocess, no binary, no duckdb, so it
+costs nothing to gate on even though the e2e tier itself does not run.
 
 ## Unit tests
 
@@ -86,20 +71,17 @@ on.
 observable outcomes: what ended up in the fake store, what a fake exporter
 was asked to produce, which vendor a summary credited a session to.
 
-**Untagged outliers** — four files carry no build tag despite touching more
+**Untagged outliers** — six files carry no build tag despite touching more
 than "pure function or fake," each for a specific reason:
 
 | File | Why untagged |
 |---|---|
 | `internal/core/arch_test.go` | Must run on every push to enforce core purity (decision 1); it only parses Go syntax, no I/O |
 | `tests/e2e/coverage_test.go` (`TestACCoverage`) | D5 — parses `docs/acceptance.md` and Go source, no subprocess, no binary, no duckdb, so it can gate the AC-ID mapping without paying the e2e tier's cost |
-| `internal/adapters/duckdbcli/cookbook_test.go` + `cookbook_query_test.go` | D11's README anti-drift guard (`TestCookbookQueriesMatchTheREADME`) needs no `duckdb` binary — it only parses `README.md`'s fenced SQL and compares it against the Go constants the integration-tier `TestCookbookQueries` actually runs |
+| `internal/adapters/duckdbcli/cookbook_test.go` | D11's README anti-drift guard (`TestCookbookQueriesMatchTheREADME`) needs no `duckdb` binary — it only parses `README.md`'s fenced SQL and compares it against the Go constants the integration-tier `TestCookbookQueries` actually runs |
+| `internal/adapters/duckdbcli/cookbook_query_test.go` | Not a test file at all in the functional sense — it holds the `CookbookQuery1`/`2`/`3` string constants `cookbook_test.go` and the integration-tier `TestCookbookQueries` both reference; untagged so both can import it |
 | `internal/ports/canonicalstore_test.go` | `ValidSessionDoc` is a pure predicate; testing it needs nothing an adapter or a build tag would add |
-
-**No redundant unit tests on adapters.** If a behavior is testable only
-against a real dependency, only the integration test exists for it — no
-`*_test.go` twin standing up an `httptest`-style substitute for something
-this repo has no HTTP adapter to fake in the first place.
+| `tests/docs/docs_test.go` | This ticket (#12) — a mechanical drift check between the docs and the tree; pure file/AST parsing, no I/O beyond reading local files |
 
 ## Fakes over mocks (D2)
 
@@ -107,7 +89,7 @@ Hand-written, in-memory fakes for every port live in
 `internal/testing/fakes/fakes.go`. Tests assert on their **observable
 state** — what a commit left in the store, what a sink was asked to
 produce, which paths a source was asked to read — "never on the order
-calls happened in or how many times a method ran" (`fakes.go:1-7`'s
+calls happened in or how many times a method ran" (`fakes.go:1-6`'s
 package doc).
 
 | Fake | Implements | Notes |
@@ -134,7 +116,7 @@ test-integration` (and as part of `just gate-expensive`).
 | `adapters/cli` | Full `sync` against a real temp filesystem | `sync_integration_test.go` |
 | `adapters/jsonlstore` | Real `os.TempDir()` store root | `jsonlstore_integration_test.go` |
 | `adapters/duckdbcli` | A real `duckdb` binary on `PATH` | `duckdbcli_integration_test.go` |
-| `adapters/duckdbcli` (cookbook) | Real `duckdb`, real export of the committed fixtures | `cookbook_integration_test.go`, `cookbook_query_test.go` |
+| `adapters/duckdbcli` (cookbook) | Real `duckdb`, real export of the committed fixtures | `cookbook_integration_test.go` |
 | `core/sync` | Real fixture trees on a real temp filesystem | `sync_integration_test.go` |
 
 **The duckdb skip-vs-fail rule.** `internal/adapters/duckdbcli`'s
@@ -233,10 +215,9 @@ func TestAC_EXPORT_04_MissingBinaryHint(t *testing.T) { /* ... */ }
 `main_test.go`'s `TestMain` resolves `$ALXBIN` once for the whole suite: if
 unset, it builds `./cmd/agent-logs-extractor` itself into a temp directory
 it cleans up afterward, and exports `ALXBIN` so every sandbox invocation
-resolves the same binary. `just test-e2e` / `test-e2e-container` pre-build
-and set `$ALXBIN` so a full suite run shares one binary instead of paying a
-rebuild per test file; `go test -tags=e2e ./tests/e2e/...` run directly
-still works with no setup step of its own.
+resolves the same binary. `just test-e2e` (`go test -tags=e2e -v -count=1
+./tests/e2e/...`, per the justfile) needs no setup step of its own — it
+relies entirely on this build-if-unset behavior.
 
 **D10 — every scenario sets both `HOME` and `AGENT_LOGS_EXTRACTOR_HOME`.**
 `sandbox`'s child environment is built from scratch (`setup_test.go`):
@@ -325,20 +306,6 @@ its §2 index row together (check (a) fails if only one exists); for a
 `tier: e2e` row, add the matching `TestAC_*` function in `tests/e2e/`
 before `TestACCoverage` will pass. Removing an AC means removing both the
 heading/row and its discharging test in the same change.
-
-## `just` targets
-
-| Target | Runs | Gated? |
-|---|---|---|
-| `just test` | Unit tests only | Yes — `just gate` |
-| `just test-integration` | Integration tests (build tag `integration`) | Yes — `just gate-expensive` |
-| `just test-integration-container` | Integration tests inside `Dockerfile.duckdb`, network-isolated | No — needs docker |
-| `just test-all` | `test` + `test-integration` | No — a convenience alias, not itself a `gate`/`gate-expensive` recipe |
-| `just test-contract` | Contract tests (build tag `contract`); requires `ALX_CONTRACT_CLAUDE_PATH` | **No — never gated** |
-| `just test-e2e` | E2E suite (build tag `e2e`) | **No — never gated** |
-| `just test-e2e-container` | E2E suite inside `Dockerfile.duckdb`, network-isolated | No — needs docker; proves AC-SCOPE-03 |
-| `just gate` | `fmt` + `vet` + `test` | Fast pre-push check |
-| `just gate-expensive` | `gate` + `test-integration` | Full check |
 
 ## CI
 
