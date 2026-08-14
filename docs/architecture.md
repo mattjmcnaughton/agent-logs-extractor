@@ -7,7 +7,8 @@ agent-logs-extractor is a Go CLI built with strict hexagonal
 `fetch-context`:
 
 - The **core** (`internal/core/`) contains pure use cases and domain
-  services, with zero infrastructure imports.
+  services — see Layering below for what "pure" means and how it's
+  enforced.
 - **Ports** (`internal/ports/`) are small Go interfaces the core depends on.
 - **Adapters** (`internal/adapters/`) are concrete implementations of ports,
   one adapter per external dependency.
@@ -54,6 +55,7 @@ internal/
 tests/
   e2e/             # Black-box tests against the compiled binary (build tag e2e),
                    # one file per AC-ID category, plus the untagged coverage_test.go
+  docs/            # Untagged: mechanical drift check between the docs and the tree
 docs/
   product/         # Product requirements (prd-mvp.md)
   technical/       # Technical design (tdd-mvp.md) — the nine core decisions live here
@@ -149,24 +151,16 @@ A few things the table can't show:
 | `Sync` | `internal/core/sync` | `sync` | `ConversationSource`, `CanonicalStore` |
 | `Export` | `internal/core/export` | `export duckdb` | `CanonicalStore`, `Exporter` |
 
-**`Sync.Run`'s severity is a three-way split, not two** (`sync.go`'s doc,
-TDD:133): (1) a malformed record or unrecognized record type *within* a
-file is counted and skipped, never fatal (TDD decision 7); (2) a `Parse`
-error — the file itself unreadable — is also counted (`FilesUnreadable`)
-and lenient, warned and continued past, for the same reason
-`claudesource.List` already warns-and-continues past an unreadable project
-*directory*; (3) a `List`, `Put`, or `Commit` failure aborts the run and
-leaves the previous store generation intact, because that is data the tool
-*had* and would otherwise silently drop.
+**`Sync.Run`'s severity is a three-way split, not two**, not merely
+lenient-vs-fatal. See `sync.go`'s doc comment and
+`docs/technical/tdd-mvp.md`'s "Severity is a three-way split, not two"
+bullet (under core decision 8) for the three cases and why each is
+lenient or fatal.
 
-**`Export.Run` is deliberately thin** (`export.go:60-90`): it resolves the
-sink by name, guards the two inputs no `Exporter` can proceed without (an
-empty destination path, a store with no root), and delegates everything
-else — denormalization, SQL generation, the temp-then-rename write — to the
-sink adapter. TDD decisions 5 and 7 place that work in the adapter because
-it is the only side of the `Exporter` port that can vary by sink; a second
-sink (parquet, sqlite) would not need to touch `internal/core/export` at
-all.
+**`Export.Run` is deliberately thin**: it resolves the sink by name and
+guards only the two inputs no `Exporter` can proceed without, delegating
+everything else to the sink adapter. See `export.go:61-67`'s doc comment
+for the full rationale.
 
 **`Sync.Vendors()`** returns the sorted set of vendors this build actually
 has a registered source for — nil-receiver-safe, so a `Deps{}` built
@@ -201,11 +195,12 @@ vendor-to-model field mappings, and the `TIMESTAMPTZ` rationale live in
 
 **Afero is only behind `CanonicalStore`.** `jsonlstore` is the one adapter
 that uses `afero.Fs` (injectable, so its own tests can run against an
-in-memory filesystem); it also imports `os` directly for a few operations
-afero has no equivalent for (e.g. `os.MkdirTemp`'s exact staging-directory
-semantics). `duckdbcli` and `claudesource` use `os`/`os/exec` directly —
-this table should not read as "all filesystem access in this repo goes
-through afero."
+in-memory filesystem) — including for its staging directory, created via
+`afero.TempDir(s.fs, s.root, stagingPrefix)` (`jsonlstore.go:125`), not
+`os.MkdirTemp`. Its only use of the `os` package is two `os.FileMode`
+constants, `dirMode`/`fileMode` (`jsonlstore.go:71-72`). `duckdbcli` and
+`claudesource` use `os`/`os/exec` directly — this table should not read as
+"all filesystem access in this repo goes through afero."
 
 ## Wiring
 
@@ -229,19 +224,10 @@ concrete adapter. In order:
    `BeginRebuild`'s sweep to clean up. `os/signal` is infrastructure, so
    this lives here, never in `internal/core`.
 
-**Path precedence for the data directory** (store, export), settled by
-`main.go`'s `defaultPaths()`:
-
-1. `AGENT_LOGS_EXTRACTOR_HOME`, when set, wins outright — `XDG_DATA_HOME`
-   is not even consulted. This is what keeps a sandboxed or test run
-   hermetic even on a machine that also happens to export `XDG_DATA_HOME`.
-2. Otherwise, `XDG_DATA_HOME` wins if it is set to an *absolute* path.
-3. Otherwise, `<home>/.local/share`.
-
-`vendorRoots` (the `~/.claude`/`~/.codex` lookup) never resolves from
-`XDG_DATA_HOME` — it always comes from `AGENT_LOGS_EXTRACTOR_HOME` (or the
-real home directory): `XDG_DATA_HOME` governs this tool's *own* data
-directory, not where a third-party tool keeps its logs.
+**Path precedence for the data directory** (store, export) is settled by
+`main.go`'s `defaultPaths()` — see `README.md`'s Sandboxing section, or
+`CLAUDE.md`'s "No config file" bullet, for the three-step precedence rule
+rather than a fourth copy of it here.
 
 ## Library choices
 
@@ -286,21 +272,9 @@ rather than restated here.
 
 ## Conventions
 
-- The core never imports `internal/adapters/` or third-party infrastructure
-  SDKs — mechanically enforced by `internal/core/arch_test.go`.
-- One port per external dependency: a new external dependency gets a new
-  interface in `internal/ports/`, and an adapter implementing it.
-- One file per cobra subcommand under `internal/adapters/cli/`. Each is a
-  thin shim: parse flags, call a use case, format output. Errors return
-  from `RunE`, not `Run`, so cobra handles them cleanly.
-- Wiring lives only in `main.go` — it is the only file that imports every
-  concrete adapter.
-- Use cases take `context.Context` first and an explicit `*slog.Logger`
-  (never a global). A `nil` logger is normalized to `slog.DiscardHandler`
-  at each use case's constructor, so every later call site is a total
-  value with no nil check of its own.
-- Version is injected at build time via `-ldflags`, defaulting to `"dev"`
-  (`internal/version/version.go`).
+This repo's coding conventions — core purity, one port per dependency, one
+file per subcommand, wiring-only-in-`main.go`, and the rest — live in
+`CLAUDE.md`'s "Key Conventions" section, not duplicated here.
 
 ## See also
 
