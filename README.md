@@ -16,7 +16,7 @@ go install github.com/mattjmcnaughton/agent-logs-extractor/cmd/agent-logs-extrac
 
 Or, from a checkout:
 ```
-just install
+just build   # builds to bin/agent-logs-extractor
 ```
 
 Querying the export requires the [DuckDB CLI](https://duckdb.org/docs/installation/); `sync` itself does not.
