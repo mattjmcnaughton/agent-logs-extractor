@@ -372,6 +372,15 @@ func TestSyncPreviousGenerationSurvivesAFailedCommit(t *testing.T) {
 	if err == nil {
 		t.Fatal("second Run: want an error (sessions is a regular file, not a directory), got nil")
 	}
+	// Pin *where* the failure happens, not just that one happened. This test
+	// only covers the deferred Discard if the run gets past BeginRebuild and
+	// every Put and then fails in Commit. If a future jsonlstore change moved
+	// the not-a-directory check into BeginRebuild, an err-is-non-nil-only
+	// assertion would still pass while silently covering nothing — which is
+	// exactly how this test's predecessor was vacuous.
+	if !strings.Contains(err.Error(), "committing store rebuild") {
+		t.Fatalf("second Run: want the failure to come from Commit (so the deferred Discard is on the unwind path), got: %v", err)
+	}
 
 	// The killer assertion: without the deferred r.Discard() in sync.go's
 	// Run, the staging directory this run wrote every doc into survives as
