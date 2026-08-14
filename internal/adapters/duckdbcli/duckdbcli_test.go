@@ -195,6 +195,92 @@ func TestNewNormalizesANilLogger(t *testing.T) {
 	}
 }
 
+// buildFakeDuckdb writes a stand-in "duckdb" executable that ignores its
+// stdin script entirely and just creates an empty file at its own last CLI
+// argument (the snapshot path Export passes) before exiting 0 — enough to
+// let Export's later os.Chmod/os.Rename succeed without a real duckdb CLI
+// or any duckdb-shaped output. It is referenced only via WithBinary, an
+// absolute path never placed on PATH, so nothing named "duckdb" is ever
+// resolvable via exec.LookPath in this test process.
+func buildFakeDuckdb(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fake-duckdb.sh")
+	// POSIX "for last do :; done" is the standard idiom for "the last
+	// positional parameter" in a shell with no arrays.
+	script := "#!/bin/sh\nfor last do :; done\n: > \"$last\"\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatalf("writing fake duckdb script: %v", err)
+	}
+	return path
+}
+
+// TestExportWithARelativeOutResolvesAgainstTheProcessCwdNotTheStoreRoot pins
+// B1: a relative req.Out must resolve the same way a user's shell resolves
+// `--out ./logs.duckdb` — against the process's cwd — even when req.Out's
+// process cwd differs from req.StoreRoot (cmd.Dir for the duckdb
+// subprocess). Before the fix, os.MkdirTemp created the temp export
+// directory relative to the process cwd, but the resulting (still
+// relative) snapshot path was then handed to a subprocess whose cwd is
+// req.StoreRoot, so duckdb tried to resolve it there instead and failed to
+// create it — the exact failure a real `--out ./logs.duckdb` run hits
+// unless the caller happens to be cd'd into the store root.
+func TestExportWithARelativeOutResolvesAgainstTheProcessCwdNotTheStoreRoot(t *testing.T) {
+	fakeDuckdb := buildFakeDuckdb(t)
+	a := New(nil, WithBinary(fakeDuckdb))
+
+	storeRoot := t.TempDir()
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+
+	relOut := filepath.Join("sub", "out.duckdb")
+	if err := a.Export(context.Background(), ports.ExportRequest{StoreRoot: storeRoot, Out: relOut}); err != nil {
+		t.Fatalf("Export with a relative Out (process cwd %s, store root %s): %v", cwd, storeRoot, err)
+	}
+
+	want := filepath.Join(cwd, "sub", "out.duckdb")
+	if _, err := os.Stat(want); err != nil {
+		t.Errorf("expected the export at the cwd-relative path %s, but it was not created: %v", want, err)
+	}
+
+	entries, err := os.ReadDir(storeRoot)
+	if err != nil {
+		t.Fatalf("reading store root %s: %v", storeRoot, err)
+	}
+	for _, e := range entries {
+		t.Errorf("store root %s unexpectedly gained entry %q; a relative Out must resolve against the process cwd, never the store root", storeRoot, e.Name())
+	}
+}
+
+// TestExportRestrictsOutputFilePermissionsTo0600 pins that the exported
+// database file ends up mode 0600 regardless of the ambient umask the
+// duckdb subprocess created it under — the export holds the same verbatim
+// prompts/code/output that jsonlstore's canonical store protects at 0600,
+// so it must not be left more permissive by default (typically 0644 under
+// a duckdb process's own umask). The fake binary here creates the snapshot
+// with a plain shell redirection (`: > file`), which is umask-permissive
+// by construction, so a passing test proves Export's own os.Chmod did the
+// work rather than the snapshot happening to already be 0600.
+func TestExportRestrictsOutputFilePermissionsTo0600(t *testing.T) {
+	fakeDuckdb := buildFakeDuckdb(t)
+	a := New(nil, WithBinary(fakeDuckdb))
+
+	storeRoot := t.TempDir()
+	out := filepath.Join(t.TempDir(), "out.duckdb")
+
+	if err := a.Export(context.Background(), ports.ExportRequest{StoreRoot: storeRoot, Out: out}); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+
+	info, err := os.Stat(out)
+	if err != nil {
+		t.Fatalf("stat %s: %v", out, err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("output file mode = %o, want 0600", got)
+	}
+}
+
 // Interface conformance is also asserted in duckdbcli.go; this pins it at
 // the test-package level too, matching the fakes/naming test convention
 // elsewhere in the repo.
