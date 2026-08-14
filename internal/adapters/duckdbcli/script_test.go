@@ -58,19 +58,33 @@ func TestBothScriptFormsDeclareTheSameSchema(t *testing.T) {
 	}
 }
 
+// docsColumnKeys are the read_json columns={...} map's own keys, exactly as
+// populatedHeader and emptyHeader hardcode them ('session', 'messages',
+// 'tool_calls') — the single point of contact between model.SessionDoc's
+// own top-level json tags and the generated SQL. Unlike sessionStructType
+// et al., these three literals live inline in the header templates rather
+// than as a named constant of their own, so this test string is kept in
+// sync with script.go by hand.
+const docsColumnKeys = "session messages tool_calls"
+
 // TestScriptColumnsCoverEveryModelJSONTag reflects over the model structs
-// that make up a SessionDoc and asserts every json tag name appears in the
+// that make up a SessionDoc — SessionDoc itself, plus each of its three
+// fields' element types — and asserts every json tag name appears in the
 // matching read_json column-type string. This catches "someone added a
 // model field and forgot the export": read_json is handed an explicit
 // columns={...} schema (not auto-detection, per model.go's #9 note), so a
 // forgotten field would silently vanish from every export rather than
-// erroring.
+// erroring. The SessionDoc case specifically catches a fourth top-level
+// field: read_json's columns={...} map silently drops any key it isn't
+// told about, so a new SessionDoc field would otherwise vanish from every
+// export with no test here failing.
 func TestScriptColumnsCoverEveryModelJSONTag(t *testing.T) {
 	cases := []struct {
 		name       string
 		model      any
 		structType string
 	}{
+		{"SessionDoc", model.SessionDoc{}, docsColumnKeys},
 		{"Session", model.Session{}, sessionStructType},
 		{"Message", model.Message{}, messageStructType},
 		{"ToolCall", model.ToolCall{}, toolCallStructType},
