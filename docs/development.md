@@ -73,30 +73,36 @@ see the comment above `gate` in the `justfile` for why, and
 
 ### Contract tier
 
-`internal/adapters/claudesource/claudesource_contract_test.go` parses a
-*live* `~/.claude` — resolved the same way wiring resolves it
-(`AGENT_LOGS_EXTRACTOR_HOME`, else `$HOME`) — and asserts the structural
-invariants every `SessionDoc` must satisfy
+`internal/adapters/claudesource/claudesource_contract_test.go` parses
+whatever `~/.claude` tree `ALX_CONTRACT_CLAUDE_PATH` points at and asserts
+the structural invariants every `SessionDoc` must satisfy
 (`internal/testing/invariants.Check`), then reports drift observations
 (`invariants.Observe`) via `t.Log`: unknown record types, malformed lines,
 dangling links, a session's `cwd` changing mid-conversation
 (`cwd_drift` — instruments `docs/technical/tdd-mvp.md`'s open question 2),
 and more. It is **strictly read-only**: only `Source.List`/`Source.Parse`
-are ever called, never a `CanonicalStore`.
+are ever called, never a `CanonicalStore`. It also fails outright (not just
+observes) if the resolved root yields session files but zero sessions, or
+sessions but zero messages — total ingestion loss, e.g. from a vendor
+renaming a field this tool depends on, is a hard failure, never a silent
+zero-row pass.
 
-It **skips, never fails**, when there is nothing to read: no root, no
-`root/projects`, or `List` finds zero session files. This is deliberate —
-CI never sets a live `~/.claude` for this tier, and neither does most
-contributors' sandboxes.
+`resolveContractRoot` **requires `ALX_CONTRACT_CLAUDE_PATH` to be set at
+all** — with it unset, the test SKIPs immediately rather than falling back
+to `AGENT_LOGS_EXTRACTOR_HOME`/`$HOME` or any other live `~/.claude`. This
+is deliberate and mechanical: CI never sets `ALX_CONTRACT_CLAUDE_PATH`, and
+a contributor's own sandbox transcript (or any other live history) must
+never be read by accident just because the env var was forgotten.
 
 `ALX_CONTRACT_CLAUDE_PATH` (**test-only** — never read by the CLI or by
-wiring, never document it in `README.md`, never expose it as a flag)
-overrides the root this tier reads. Use it to point the tier at a fixture
-tree instead of a real `~/.claude`, e.g. to prove it actually finds and
-reports on real logs without a developer's own history:
+wiring, never document it in `README.md`, never expose it as a flag) is
+therefore the *only* way to run this tier at all. Point it at an empty
+directory to exercise the skip path, or at a fixture tree (or your own
+real `~/.claude`) to exercise the found-logs path:
 
 ```sh
-ALX_CONTRACT_CLAUDE_PATH=internal/testing/logfixture/claude just test-contract
+ALX_CONTRACT_CLAUDE_PATH=$(mktemp -d) just test-contract                             # skip path
+ALX_CONTRACT_CLAUDE_PATH=$PWD/internal/testing/logfixture/claude just test-contract   # found-logs path
 ```
 
 **Never point `ALX_CONTRACT_CLAUDE_PATH` at another session's or another

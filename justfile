@@ -49,16 +49,22 @@ test-integration-container:
     docker build -f Dockerfile.duckdb -t agent-logs-extractor-duckdb-test .
     docker run --rm --network none agent-logs-extractor-duckdb-test
 
-# Run the opt-in contract tier: parses the developer's *live* ~/.claude
-# (AGENT_LOGS_EXTRACTOR_HOME, else $HOME) and asserts structural invariants
-# plus vendor-format-drift observations
-# (internal/adapters/claudesource/claudesource_contract_test.go). Never
-# gated (see the note above `gate` below) — it needs real session history
-# to say anything, which CI has none of, and a contributor with no Claude
-# Code history of their own must not see this fail. -v -count=1 so a
-# skip's reason (or a real run's t.Log report) is never hidden by Go's test
-# cache. ALX_CONTRACT_CLAUDE_PATH (test-only, see docs/development.md) can
-# redirect this at a fixture tree instead of a real ~/.claude.
+# Run the opt-in contract tier: asserts structural invariants plus
+# vendor-format-drift observations
+# (internal/adapters/claudesource/claudesource_contract_test.go) against
+# whatever ~/.claude ALX_CONTRACT_CLAUDE_PATH (test-only, see
+# docs/development.md) points at. Never gated (see the note above `gate`
+# below) — it needs real session history to say anything, which CI has none
+# of, and a contributor with no Claude Code history of their own must not
+# see this fail. -v -count=1 so a skip's reason (or a real run's t.Log
+# report) is never hidden by Go's test cache.
+#
+# DO NOT run this recipe bare: with no ALX_CONTRACT_CLAUDE_PATH set, the
+# test now SKIPs outright rather than defaulting to this sandbox's own
+# ~/.claude (its harness transcript, not a developer's history, and not
+# ours to read). Always set it explicitly:
+#   ALX_CONTRACT_CLAUDE_PATH=$(mktemp -d) just test-contract                             # skip path
+#   ALX_CONTRACT_CLAUDE_PATH=$PWD/internal/testing/logfixture/claude just test-contract   # found-logs path
 test-contract:
     go test -tags=contract -v -count=1 ./...
 
