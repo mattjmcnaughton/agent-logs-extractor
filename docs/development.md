@@ -17,9 +17,10 @@
 go mod tidy
 ```
 
-Nothing in this repo reads a `.env` file — `.env.example` documents the
-real environment variables for reference only; export them directly if you
-need them.
+Nothing in this repo reads a `.env` file — there is no config file at all
+(`AC-SCOPE-02`). Export the three env vars directly in your shell if you
+need them; see `README.md`'s Sandboxing/Logging sections or `CLAUDE.md`'s
+"No config file" bullet for what each one does.
 
 ## Common Tasks
 
@@ -79,11 +80,9 @@ just test-e2e
 just test-e2e-container
 ```
 
-Set `$ALXBIN` to reuse a pre-built binary across a whole suite run
-(`just test-e2e` does this for you); otherwise `TestMain` builds one
-itself. A criterion marked **†** in `docs/acceptance.md` needs a real
-`duckdb` binary and skips (not fails) without one — `just test-e2e-container`
-makes every `†` criterion actually run without a local duckdb install.
+Set `$ALXBIN` to reuse a pre-built binary across a whole suite run;
+otherwise `TestMain` builds one itself. See `docs/testing.md` for the `†`
+marker and the container recipe.
 
 ## Building with a Version
 
