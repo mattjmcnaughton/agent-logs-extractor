@@ -263,6 +263,15 @@ func TestExportPreservesRawAndArgumentsAsQueryableJSON(t *testing.T) {
 		t.Fatalf("Export: %v", err)
 	}
 
+	// Guard against a vacuous pass: both assertions below are
+	// count(*) ... IS NULL == 0, trivially true against empty tables too.
+	if got := countTable(t, duckdbBin, out, "messages"); got == 0 {
+		t.Fatal("messages table is empty; the raw.type check below would be vacuous")
+	}
+	if got := countTable(t, duckdbBin, out, "tool_calls"); got == 0 {
+		t.Fatal("tool_calls table is empty; the arguments.command check below would be vacuous")
+	}
+
 	// Every message's raw vendor record carries a "type" field
 	// (docs/technical/tdd-mvp.md's Claude mapping notes).
 	rows := queryJSON(t, duckdbBin, out, `SELECT count(*) AS n FROM messages WHERE json_extract_string(raw, '$.type') IS NULL`)
@@ -280,8 +289,13 @@ func TestExportPreservesRawAndArgumentsAsQueryableJSON(t *testing.T) {
 // --- I5: atomic overwrite ----------------------------------------------------
 
 // TestExportOverwritesAPreviousSnapshotAtomically runs two exports to the
-// same --out and asserts no ".export-*" temp directory and no "*.wal" file
-// survive, and the second export's data is intact (D4).
+// same --out and asserts no ".export-*" temp directory survives, and the
+// second export's data is intact (D4). It does not separately check for a
+// leftover "*.wal": duckdb writes "snapshot.duckdb.wal" inside tmpDir, and
+// only "snapshot.duckdb" itself is ever renamed out of there, so on a
+// clean run the deferred os.RemoveAll(tmpDir) always takes the .wal with
+// it — a .wal check here could never fail regardless of whether the
+// underlying cleanup logic works.
 func TestExportOverwritesAPreviousSnapshotAtomically(t *testing.T) {
 	duckdbBin := requireDuckDB(t)
 	storeRoot := t.TempDir()
@@ -305,9 +319,6 @@ func TestExportOverwritesAPreviousSnapshotAtomically(t *testing.T) {
 		name := e.Name()
 		if strings.HasPrefix(name, ".export-") {
 			t.Errorf("leftover temp export directory %q after two clean exports", name)
-		}
-		if strings.HasSuffix(name, ".wal") {
-			t.Errorf("leftover WAL file %q after two clean exports", name)
 		}
 	}
 

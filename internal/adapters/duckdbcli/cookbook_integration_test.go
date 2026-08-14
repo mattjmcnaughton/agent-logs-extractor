@@ -227,7 +227,7 @@ func TestCookbookQueries(t *testing.T) {
 		q := strings.Replace(duckdbcli.CookbookQuery1, "'fetch-context'", "'fixture-project'", 1)
 		rows := queryJSON(t, duckdbBin, out, q)
 		if len(rows) != 0 {
-			t.Errorf("got %d rows, want 0 (fixture-project's only user message rebases to exactly the INTERVAL 1 DAY boundary): %v", len(rows), rows)
+			t.Errorf("got %d rows, want 0 (fixture-project's only user message rebases to 25h ago, an hour outside the INTERVAL 1 DAY window — deliberately not exactly on the boundary, so this stays robust rather than flaky): %v", len(rows), rows)
 		}
 	})
 
