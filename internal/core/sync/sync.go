@@ -148,17 +148,13 @@ func (s *Sync) Run(ctx context.Context, req Request) (Summary, error) {
 	// Resolve every vendor to a registered source before touching the
 	// store at all, so a bad --vendor value never leaves a partially
 	// rebuilt generation behind.
-	type work struct {
-		req SourceRequest
-		src ports.ConversationSource
-	}
-	items := make([]work, 0, len(req.Sources))
-	for _, sr := range req.Sources {
+	srcs := make([]ports.ConversationSource, len(req.Sources))
+	for i, sr := range req.Sources {
 		src, ok := s.sources[sr.Vendor]
 		if !ok {
 			return Summary{}, fmt.Errorf("%w: %s", ErrNoSourceForVendor, sr.Vendor)
 		}
-		items = append(items, work{req: sr, src: src})
+		srcs[i] = src
 	}
 
 	r, err := s.store.BeginRebuild(ctx)
@@ -177,11 +173,11 @@ func (s *Sync) Run(ctx context.Context, req Request) (Summary, error) {
 	// way, a session id that more than one ingestVendor call Puts must only
 	// ever contribute to one vendor's printed tally, matching the one doc
 	// it actually leaves in the store.
-	counts := make(map[string][2]int) // session id -> {messages, toolCalls}
+	counts := make(map[string]sessionCounts)
 
-	summary := Summary{Vendors: make([]VendorSummary, 0, len(items))}
-	for _, it := range items {
-		vs, err := s.ingestVendor(ctx, r, it.src, it.req, counts)
+	summary := Summary{Vendors: make([]VendorSummary, 0, len(req.Sources))}
+	for i, sr := range req.Sources {
+		vs, err := s.ingestVendor(ctx, r, srcs[i], sr, counts)
 		if err != nil {
 			return Summary{}, err
 		}
@@ -195,19 +191,28 @@ func (s *Sync) Run(ctx context.Context, req Request) (Summary, error) {
 	return summary, nil
 }
 
+// sessionCounts is one session id's contribution to a VendorSummary: the
+// message and tool-call counts of whichever doc most recently won that id
+// (see ingestVendor's doc), named rather than a [2]int tuple so the "later
+// doc wins, counted once" invariant reads directly at every call site.
+type sessionCounts struct {
+	messages  int
+	toolCalls int
+}
+
 // ingestVendor lists and parses every session file src reports under
 // sr.Root, writes each into r, and accumulates one vendor's summary. counts
-// is Run's shared, global session-id -> (messages, toolCalls) map (see
-// Run's doc): two files that parse to the same session id both go into the
-// store (the later Put wins) and must only ever be counted once, with the
-// later doc's message and tool-call counts — otherwise the printed summary
-// would not reconcile against what the store actually holds. before
-// snapshots counts as this call found it, so the tally at the end can tell
-// "an id this call itself put for the first time" (credited to this
-// vendor) apart from "an id an earlier vendor in this same Run already put"
-// (already credited there; not re-counted here even though this call's Put
-// just overwrote it in the store).
-func (s *Sync) ingestVendor(ctx context.Context, r ports.StoreRebuild, src ports.ConversationSource, sr SourceRequest, counts map[string][2]int) (VendorSummary, error) {
+// is Run's shared, global session-id -> sessionCounts map (see Run's doc):
+// two files that parse to the same session id both go into the store (the
+// later Put wins) and must only ever be counted once, with the later doc's
+// message and tool-call counts — otherwise the printed summary would not
+// reconcile against what the store actually holds. before snapshots counts
+// as this call found it, so the tally at the end can tell "an id this call
+// itself put for the first time" (credited to this vendor) apart from "an
+// id an earlier vendor in this same Run already put" (already credited
+// there; not re-counted here even though this call's Put just overwrote it
+// in the store).
+func (s *Sync) ingestVendor(ctx context.Context, r ports.StoreRebuild, src ports.ConversationSource, sr SourceRequest, counts map[string]sessionCounts) (VendorSummary, error) {
 	vs := VendorSummary{Vendor: sr.Vendor}
 	before := maps.Clone(counts)
 	own := make(map[string]bool) // ids this call Put, regardless of whether they pre-existed in counts
@@ -237,13 +242,22 @@ func (s *Sync) ingestVendor(ctx context.Context, r ports.StoreRebuild, src ports
 			skips[reason] += n
 		}
 
-		if len(doc.Messages) == 0 && len(doc.ToolCalls) == 0 && doc.Session.SessionID == "" {
-			s.log.Debug("sync: session log yielded no records; nothing stored", "vendor", sr.Vendor, "path", p)
-			continue
-		}
 		if !ports.ValidSessionDoc(doc.Session) {
-			s.log.Warn("sync: session doc has no storable session id; skipping it",
-				"vendor", doc.Session.Vendor, "session_id", doc.Session.SessionID, "path", p)
+			if len(doc.Messages) == 0 && len(doc.ToolCalls) == 0 {
+				// A zero-message, zero-tool-call, invalid-id doc is pure
+				// bookkeeping — nothing was ever going to be stored — so
+				// this is normal, not a warning. An invalid id on a doc
+				// that DOES carry content is the branch below: it means
+				// real data is being dropped, which is worth a warning. A
+				// SessionID check alone can't distinguish these (a doc
+				// with content and an empty id is also ValidSessionDoc ==
+				// false), so the level is chosen on emptiness, not
+				// re-deriving a narrower id check.
+				s.log.Debug("sync: session log yielded no records; nothing stored", "vendor", sr.Vendor, "path", p)
+			} else {
+				s.log.Warn("sync: session doc has no storable session id; skipping it",
+					"vendor", doc.Session.Vendor, "session_id", doc.Session.SessionID, "path", p)
+			}
 			continue
 		}
 		if doc.Session.Vendor != sr.Vendor {
@@ -259,7 +273,7 @@ func (s *Sync) ingestVendor(ctx context.Context, r ports.StoreRebuild, src ports
 		if err := r.Put(ctx, doc); err != nil {
 			return VendorSummary{}, fmt.Errorf("sync: writing session %s (from %s): %w", doc.Session.SessionID, p, err)
 		}
-		counts[doc.Session.SessionID] = [2]int{len(doc.Messages), len(doc.ToolCalls)}
+		counts[doc.Session.SessionID] = sessionCounts{messages: len(doc.Messages), toolCalls: len(doc.ToolCalls)}
 		own[doc.Session.SessionID] = true
 	}
 
@@ -272,8 +286,8 @@ func (s *Sync) ingestVendor(ctx context.Context, r ports.StoreRebuild, src ports
 		}
 		vs.Sessions++
 		c := counts[id]
-		vs.Messages += c[0]
-		vs.ToolCalls += c[1]
+		vs.Messages += c.messages
+		vs.ToolCalls += c.toolCalls
 	}
 	if len(skips) > 0 {
 		vs.Skipped = skips

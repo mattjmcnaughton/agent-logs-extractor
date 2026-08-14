@@ -53,25 +53,20 @@ func newSyncCmd(deps Deps) *cobra.Command {
 // sync. An empty flag fans out to every vendor in available (the deferred-
 // Codex landmine: available is Sync.Vendors(), so a bare `sync` ingests
 // whatever this build actually has a source for, rather than hardcoding
-// both vendor names and letting Run fail on the missing one). A vendor
-// named explicitly must be in available, or the error says so, naming what
-// is available; an unrecognized vendor name is always an error, regardless
-// of availability.
+// both vendor names and letting Run fail on the missing one). available is
+// already sorted (Sync.Vendors()'s own contract), so the empty case needs
+// no vendor-name list of its own. A vendor named explicitly must be in
+// available, or the error says so, naming what is available; an
+// unrecognized vendor name is always an error, regardless of availability.
 func selectedVendors(vendor string, available []model.Vendor) ([]model.Vendor, error) {
 	have := func(v model.Vendor) bool { return slices.Contains(available, v) }
 
 	switch vendor {
 	case "":
-		var out []model.Vendor
-		for _, v := range []model.Vendor{model.VendorClaude, model.VendorCodex} {
-			if have(v) {
-				out = append(out, v)
-			}
-		}
-		if len(out) == 0 {
+		if len(available) == 0 {
 			return nil, fmt.Errorf("no vendor sources are available in this build")
 		}
-		return out, nil
+		return slices.Clone(available), nil
 	case string(model.VendorClaude), string(model.VendorCodex):
 		v := model.Vendor(vendor)
 		if !have(v) {
