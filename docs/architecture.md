@@ -21,6 +21,7 @@ internal/
     cli/           # Cobra subcommands (thin shims), one file each
     claudesource/  # ConversationSource for ~/.claude/projects (Claude Code)
     jsonlstore/    # CanonicalStore over afero: JSONL store + atomic swap
+    duckdbcli/     # Exporter over the duckdb CLI subprocess (os/exec)
   testing/
     fakes/         # In-memory fakes for every port
     logfixture/    # Verbatim vendor log fixtures
@@ -32,10 +33,9 @@ internal/
 
 Concrete adapters (source parsers, the canonical store, the DuckDB exporter)
 land as their tickets close; the port and use-case shapes above are frozen
-by this ticket for them to build against. `claudesource` (#6) and
-`jsonlstore` (#7) have landed and are wired into `main.go` as of #8, which
-also implements `internal/core/sync`; `codexsource` and `duckdbcli` remain
-to come.
+by this ticket for them to build against. `claudesource` (#6), `jsonlstore`
+(#7), and `duckdbcli` (#9, which also implements `internal/core/export`)
+have landed and are wired into `main.go`; `codexsource` remains to come.
 
 ## Layering
 
@@ -76,6 +76,14 @@ once in `main.go` (wiring).
 - Integration tests: tagged with `//go:build integration`, run via `just test-integration`
 - No test framework required — use stdlib `testing` package
 - Fakes over mocks: hand-written in-memory fakes in `internal/testing/fakes/`
+- `internal/adapters/duckdbcli`'s integration tests need a real `duckdb` CLI
+  on `PATH`; they skip (not fail) when it's absent, via a shared
+  `requireDuckDB(t)` helper — set `ALX_REQUIRE_DUCKDB=1` to make a missing
+  binary a hard failure instead of a skip. CI's `.github/workflows/ci.yml`
+  runs this tier with `ALX_REQUIRE_DUCKDB=1` in two jobs: a native job with
+  a version-pinned `duckdb` release installed on the runner (the
+  load-bearing one), and an additive job running the same tier inside a
+  container built from `Dockerfile.duckdb`, network-isolated at run time.
 
 ## Conventions
 

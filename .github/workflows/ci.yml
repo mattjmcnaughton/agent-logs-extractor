@@ -9,8 +9,14 @@ on:
 permissions:
   contents: read
 
+env:
+  # Pinned DuckDB CLI release. Reproducibility here comes from pinning the
+  # *version* in the download URL — see the sha256 note on the install
+  # steps below for why this workflow does not also pin a checksum yet.
+  DUCKDB_VERSION: "1.4.0"
+
 jobs:
-  ci:
+  gate:
     name: Gate
     runs-on: ubuntu-latest
 
@@ -33,3 +39,92 @@ jobs:
 
       - name: Run gate
         run: just gate
+
+  gate-expensive-native:
+    name: Gate (expensive, native duckdb)
+    # This is the PRIMARY gate for #9's acceptance criterion: it proves the
+    # duckdb integration tier (including the README cookbook acceptance
+    # test) against a real duckdb CLI pinned on the runner.
+    # ALX_REQUIRE_DUCKDB=1 turns requireDuckDB's skip into a hard failure,
+    # so a duckdb-install problem here is unmistakably a test failure
+    # rather than a silent skip — the same reason the "Verify duckdb" step
+    # below runs before Go tests at all.
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Setup Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version: "1.25.0"
+          cache: true
+
+      - name: Install just
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y just unzip
+
+      - name: Install duckdb
+        # The plan's install-method survey (TDD #9, decision D9): apt has
+        # no duckdb package, there is no official snap, the duckdb.org
+        # install script resolves "latest" at run time (right for the
+        # README's human-facing hint, wrong for a reproducible CI job), and
+        # a third-party GitHub Action adds supply-chain surface this repo
+        # would rather not carry. So: download the pinned release zip
+        # directly from the version in DUCKDB_VERSION.
+        #
+        # sha256: the plan asks for a pinned checksum here, but nobody
+        # authoring this ticket could reach GitHub releases to compute one
+        # (see the ticket's report). Fabricating a hash would be worse than
+        # having none — a wrong hash fails every future run with a
+        # "corruption" error that reads like a supply-chain attack, not a
+        # typo. So this step only *computes and echoes* the hash below.
+        # TODO(#9 follow-up): once this job has run for real, copy the
+        # sha256sum output from the log into a `sha256sum -c` step here.
+        run: |
+          curl -fsSL -o /tmp/duckdb.zip \
+            "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip"
+          echo "duckdb_cli-linux-amd64.zip sha256 (TODO: pin this in a follow-up):"
+          sha256sum /tmp/duckdb.zip
+          sudo unzip -o /tmp/duckdb.zip -d /usr/local/bin
+          sudo chmod +x /usr/local/bin/duckdb
+          rm /tmp/duckdb.zip
+
+      - name: Verify duckdb
+        # Fails loudly here, before any Go test runs, if the install step
+        # above silently produced a broken or wrong-arch binary — that is a
+        # CI-environment problem, not a test failure, and this keeps the
+        # two kinds of red build visually distinct in the job list.
+        run: duckdb -version
+
+      - name: Run gate-expensive
+        env:
+          ALX_REQUIRE_DUCKDB: "1"
+        run: just gate-expensive
+
+  gate-expensive-container:
+    name: Gate (expensive, containerized duckdb)
+    # Additive, not load-bearing: this job proves the same integration
+    # tier again inside a container built by Dockerfile.duckdb, with the
+    # tests themselves run --network none. It was never executed locally —
+    # this repository's authoring sandbox has no working container daemon
+    # (`docker info` fails) — so this is its first real run, same as the
+    # duckdb integration tier itself. gate-expensive-native above is the
+    # independent, load-bearing proof of the acceptance criterion; if this
+    # job turns out flaky or wrong it can be reverted on its own without
+    # reopening the ticket.
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Build the duckdb test image
+        # Network access here only (installing duckdb + just into the
+        # image); the run step below is network-isolated.
+        run: docker build --build-arg DUCKDB_VERSION="${DUCKDB_VERSION}" -f Dockerfile.duckdb -t agent-logs-extractor-duckdb-test .
+
+      - name: Run the integration tier inside the container, network-isolated
+        run: docker run --rm --network none -e ALX_REQUIRE_DUCKDB=1 agent-logs-extractor-duckdb-test

@@ -38,6 +38,15 @@ tidy:
 scrub-fixture *args:
     go run ./internal/tools/scrubfixture {{args}}
 
+# Build the containerized duckdb test image and run the integration tier
+# inside it, network-isolated at run time (Dockerfile.duckdb). Requires a
+# working docker daemon; not part of `gate`/`gate-expensive` because it
+# needs docker, not just Go — CI's "Gate (expensive, containerized duckdb)"
+# job runs the same two commands directly.
+test-integration-container:
+    docker build --build-arg DUCKDB_VERSION=1.4.0 -f Dockerfile.duckdb -t agent-logs-extractor-duckdb-test .
+    docker run --rm --network none -e ALX_REQUIRE_DUCKDB=1 agent-logs-extractor-duckdb-test
+
 # Fast pre-push check
 gate: fmt vet test
 

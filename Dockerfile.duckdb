@@ -1,0 +1,44 @@
+# Dockerfile.duckdb builds an image that can run this repo's duckdb
+# integration tier with a real duckdb CLI baked in, and no network access
+# needed at test-run time.
+#
+# Network access is required only while *building* this image (installing
+# duckdb and just); the CI job that uses it (.github/workflows/ci.yml's
+# "Gate (expensive, containerized duckdb)") runs the resulting container
+# with `docker run --network none`, so the actual test execution is
+# network-isolated end to end — the "minimum honest form" of a
+# containerized duckdb test: baked-in tooling, isolated execution, nothing
+# faked about duckdb's own behavior.
+#
+# This Dockerfile has never been built or run in this repo's authoring
+# environment (no working container daemon there — `docker info` fails);
+# CI is its first real execution. See the ticket's report for details.
+#
+# sha256: see the matching install step in .github/workflows/ci.yml for why
+# this Dockerfile does not pin a checksum for the downloaded release zip
+# (TODO there once one has been observed from a real run).
+
+FROM golang:1.25-bookworm
+
+ARG DUCKDB_VERSION=1.4.0
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends unzip ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL -o /tmp/duckdb.zip \
+      "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip" \
+    && echo "duckdb_cli-linux-amd64.zip sha256 (TODO: pin once observed from a real run):" \
+    && sha256sum /tmp/duckdb.zip \
+    && unzip -o /tmp/duckdb.zip -d /usr/local/bin \
+    && chmod +x /usr/local/bin/duckdb \
+    && rm /tmp/duckdb.zip
+
+RUN curl -fsSL https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+
+WORKDIR /workspace
+COPY . .
+
+ENV ALX_REQUIRE_DUCKDB=1
+
+CMD ["just", "test-integration"]
