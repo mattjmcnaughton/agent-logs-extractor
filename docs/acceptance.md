@@ -57,10 +57,10 @@ tier and the integration tier will disagree.
 
 ### 1.4 Per-scenario isolation
 
-Every e2e scenario runs against a fresh `sandbox` (`tests/e2e/setup.go`):
+Every e2e scenario runs against a fresh `sandbox` (`tests/e2e/setup_test.go`):
 an isolated home directory that backs **both** `HOME` and, by default,
-`AGENT_LOGS_EXTRACTOR_HOME` (decision R... see D10 in the ticket plan this
-document was written from) — never the real host `HOME`. `AC-SANDBOX-03`
+`AGENT_LOGS_EXTRACTOR_HOME` (decision D10, §12) — never the real host
+`HOME`. `AC-SANDBOX-03`
 is the one scenario that deliberately unsets `AGENT_LOGS_EXTRACTOR_HOME`
 from the child environment; `HOME` still points at the sandbox even then,
 so the scenario can never see the host's real `~/.claude`. The child
@@ -86,7 +86,7 @@ exactly one discharging test, and that every `TestAC_*` test in
 
 A criterion marked **†** requires a real `duckdb` binary
 (`internal/adapters/duckdbcli.requireDuckDB`-equivalent — see
-`tests/e2e/assertions.go`'s `requireDuckDB`): it **skips** when `duckdb` is
+`tests/e2e/assertions_test.go`'s `requireDuckDB`): it **skips** when `duckdb` is
 absent from `PATH` and `ALX_REQUIRE_DUCKDB` is unset, and **fails** when
 `duckdb` is absent and `ALX_REQUIRE_DUCKDB=1` (CI's native and containerized
 gate-expensive jobs, and the `test-e2e-container` image, all set it).
@@ -478,3 +478,39 @@ none <img> just test-e2e`) — no second Dockerfile, no named volumes (the
 image warms its Go module cache at build time; no bind mounts are needed at
 run time). `ALX_REQUIRE_DUCKDB=1` is already an image `ENV`, so every `†`
 criterion hard-fails inside the container rather than silently skipping.
+
+The three decisions below (T3) were cited by their short D-series names in
+code comments (`tests/e2e/main_test.go`, `coverage_test.go`,
+`setup_test.go`) from the start, but were never actually written down
+anywhere — the citations pointed at "the ticket plan this document was
+written from," a document that was never part of this repo. They are
+promoted here, under their existing names, so every `D1`/`D5`/`D10`
+reference in the tree now resolves.
+
+**D1 — an unset `$ALXBIN` builds a binary, it does not fail.**
+`tests/e2e/main_test.go`'s `TestMain` resolves `$ALXBIN` once for the whole
+suite: if unset, it builds `./cmd/agent-logs-extractor` itself into a temp
+directory it cleans up afterward, and exports `ALXBIN` so every sandbox
+invocation resolves the same binary. The `just test-e2e` /
+`test-e2e-container` recipes pre-build and set `$ALXBIN` so a full suite
+run shares one binary instead of paying a rebuild per test file; a
+developer running `go test -tags=e2e ./tests/e2e/...` directly still gets a
+working suite with no setup step of their own.
+
+**D5 — `TestACCoverage` carries no build tag.** It never spawns the binary,
+never touches duckdb, never needs a fixture — it only parses this document
+and the Go source under `tests/e2e/` and the rest of the repo — so it runs
+as part of the untagged `go test ./...` / `just gate` (§1.5) and proves the
+AC-ID ↔ test mapping stays honest on every push, not just when someone
+remembers to run the opt-in e2e tier. It is deliberately the one file in
+`tests/e2e/` without `//go:build e2e`.
+
+**D10 — every e2e run sets both `HOME` and `AGENT_LOGS_EXTRACTOR_HOME`.**
+`sandbox`'s child environment is built from scratch (§1.4): `HOME` always
+points at the sandbox's isolated temp directory, and
+`AGENT_LOGS_EXTRACTOR_HOME` is set to the same value by default — both, not
+just one, so a scenario can never fall through to the real host `HOME` no
+matter which precedence path the binary takes internally.
+`AC-SANDBOX-03`'s `unsetAgentLogsExtractorHome()` omits
+`AGENT_LOGS_EXTRACTOR_HOME` from the child environment for that one
+scenario, but `HOME` still points at the sandbox even then.
