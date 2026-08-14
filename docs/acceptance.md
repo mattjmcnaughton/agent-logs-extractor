@@ -103,6 +103,7 @@ gate-expensive jobs, and the `test-e2e-container` image, all set it).
 | AC-CLI-04 | US-5 | `export` with no sink exits 1, stderr names duckdb | `TestAC_CLI_04_ExportRequiresASink` | e2e |
 | AC-CLI-05 | US-5 | `export bogus` exits 1, stderr names the sink | `TestAC_CLI_05_UnknownExportSink` | e2e |
 | AC-CLI-06 | — | `--log-level bogus` exits 1 before any work | `TestAC_CLI_06_InvalidLogLevel` | e2e |
+| AC-CLI-07 | — | `AGENT_LOGS_EXTRACTOR_LOG_LEVEL`: flag wins over env, invalid env value warns and falls back to `info` | `TestAC_CLI_07_LogLevelEnvVar` | e2e |
 | AC-SYNC-01 | US-1 | `sync --claude-path` over the fixture tree prints the canonical summary, writes 3 store files | `TestAC_SYNC_01_FixtureTreeSummary` | e2e |
 | AC-SYNC-02 | US-1 | bare `sync` resolves `~/.claude` from the sandbox home, identical summary | `TestAC_SYNC_02_BareSyncUsesSandboxHome` | e2e |
 | AC-SYNC-03 | US-2 | re-run is byte-identical, no leftovers | `TestAC_SYNC_03_RerunIsIdempotent` | e2e |
@@ -165,6 +166,42 @@ gate-expensive jobs, and the `test-e2e-container` image, all set it).
   `RunE` runs).
 - Then: exit `1`; stderr contains `invalid --log-level "bogus"`; no sync
   side effect occurs (the store directory is never created).
+
+**AC-CLI-07 — `AGENT_LOGS_EXTRACTOR_LOG_LEVEL` env var**
+
+`README.md`'s "Logging" section documents two behaviors this criterion
+covers together: `--log-level` beats the env var when both are set, and
+(deliberately unlike `--log-level`'s hard failure, AC-CLI-06) an invalid
+env var value is a warning that falls back to `info`, not a failure. There
+is no direct observable signal for "which level is in effect" other than
+`--log-level debug`'s own effect (the skip-by-reason breakdown AC-SKIP-02
+already pins), so that effect stands in as the proxy across all three
+sub-cases below.
+
+- Given: `agent-logs-extractor sync --claude-path <the committed Claude
+  fixture root>` (same fixture and skip breakdown as AC-SKIP-02).
+- When (1): `AGENT_LOGS_EXTRACTOR_LOG_LEVEL=warn` in the environment,
+  `--log-level debug` on the command line.
+- Then (1): exit `0`; stderr carries the debug-only skip breakdown
+  (`msg="sync: skipped records"`) — the flag wins even though the env var
+  alone would suppress it.
+- When (2): `AGENT_LOGS_EXTRACTOR_LOG_LEVEL=debug` in the environment, no
+  `--log-level` flag.
+- Then (2): exit `0`; stderr carries the same debug-only skip breakdown —
+  the env var alone governs the level.
+- When (3): `AGENT_LOGS_EXTRACTOR_LOG_LEVEL=bogus` in the environment, no
+  `--log-level` flag.
+- Then (3): exit `0` (not `1` — unlike AC-CLI-06, an invalid env var value
+  is a warning, not a hard error); stderr contains `invalid
+  AGENT_LOGS_EXTRACTOR_LOG_LEVEL "bogus"`; stderr carries no debug-only skip
+  breakdown (falls back to `info`).
+
+Two related gaps are deliberately **out of scope**, not oversights:
+`--codex-path` has no AC of its own because Codex source support itself
+isn't implemented yet (nothing to point it at); US-2's "in seconds" has no
+timing criterion because wall-clock performance is not part of this
+ticket's observable contract and would need a dedicated, environment-
+sensitive benchmark to assert honestly.
 
 ## 4. `sync`
 
