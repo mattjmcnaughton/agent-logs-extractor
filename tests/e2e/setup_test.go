@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/testing/logfixture"
@@ -181,16 +182,12 @@ func (s *sandbox) seedFullClaudeTree() {
 // when present; otherwise an absolute XDG_DATA_HOME wins; otherwise
 // <home>/.local/share.
 func (s *sandbox) dataHome() string {
-	envHome := ""
-	if !s.noHomeVar {
-		envHome = s.home
-	}
-	home := envHome
-	if home == "" {
-		home = s.home // HOME is always s.home in this sandbox (D10)
-	}
-	dataHome := filepath.Join(home, ".local", "share")
-	if envHome == "" {
+	// HOME is always s.home in this sandbox (D10), so the join below is the
+	// same regardless of noHomeVar; only the XDG override below depends on
+	// it (AGENT_LOGS_EXTRACTOR_HOME unset is exactly when XDG_DATA_HOME is
+	// even consulted).
+	dataHome := filepath.Join(s.home, ".local", "share")
+	if s.noHomeVar {
 		if xdg, ok := s.extraEnv["XDG_DATA_HOME"]; ok && filepath.IsAbs(xdg) {
 			dataHome = xdg
 		}
@@ -224,7 +221,7 @@ func pathWithoutDuckDB() string {
 		}
 		kept = append(kept, d)
 	}
-	return joinPathList(kept)
+	return strings.Join(kept, string(os.PathListSeparator))
 }
 
 func hasExecutable(dir, name string) bool {
@@ -233,17 +230,6 @@ func hasExecutable(dir, name string) bool {
 	}
 	fi, err := os.Stat(filepath.Join(dir, name))
 	return err == nil && !fi.IsDir()
-}
-
-func joinPathList(dirs []string) string {
-	out := ""
-	for i, d := range dirs {
-		if i > 0 {
-			out += string(os.PathListSeparator)
-		}
-		out += d
-	}
-	return out
 }
 
 // copyTree recursively copies src to dst, so a test can seed a mutable
