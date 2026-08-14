@@ -1,4 +1,4 @@
-package duckdbcli
+package duckdbcli_test
 
 import (
 	"os"

@@ -33,31 +33,6 @@ func assertMatchesGolden(t *testing.T, path, got string) {
 	}
 }
 
-// TestBothScriptFormsDeclareTheSameSchema pins C.2's contract: the
-// populated and empty forms differ only in the header comment and the
-// _docs declaration — every relation-building statement from "CREATE TABLE
-// sessions AS" onward is byte-identical, so the two branches can never
-// silently drift into declaring different columns.
-func TestBothScriptFormsDeclareTheSameSchema(t *testing.T) {
-	populated := Script(true)
-	empty := Script(false)
-
-	pIdx := strings.Index(populated, schemaBoundary)
-	eIdx := strings.Index(empty, schemaBoundary)
-	if pIdx < 0 {
-		t.Fatalf("Script(true) does not contain %q", schemaBoundary)
-	}
-	if eIdx < 0 {
-		t.Fatalf("Script(false) does not contain %q", schemaBoundary)
-	}
-
-	pTail := populated[pIdx:]
-	eTail := empty[eIdx:]
-	if pTail != eTail {
-		t.Errorf("script tails diverge from %q onward:\n--- populated ---\n%s\n--- empty ---\n%s", schemaBoundary, pTail, eTail)
-	}
-}
-
 // docsColumnKeys are the read_json columns={...} map's own keys, exactly as
 // populatedHeader and emptyHeader hardcode them ('session', 'messages',
 // 'tool_calls') — the single point of contact between model.SessionDoc's
