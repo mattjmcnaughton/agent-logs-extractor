@@ -82,6 +82,9 @@ func TestAC_SYNC_05_VendorClaudeMatchesBareSync(t *testing.T) {
 	vendored.seedFullClaudeTree()
 	vendoredRes := vendored.run("sync", "--vendor", "claude")
 	wantCode(t, vendoredRes, 0)
+	// A6: pin vendoredRes's own content — without this, two runs that both
+	// printed "" would still satisfy the equality check below.
+	wantStdout(t, vendoredRes, fixtureSummary)
 
 	if vendoredRes.stdout != bareRes.stdout {
 		t.Errorf("sync --vendor claude stdout = %q, want it identical to bare sync's %q", vendoredRes.stdout, bareRes.stdout)

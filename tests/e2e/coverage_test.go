@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -99,6 +100,14 @@ func TestACCoverage(t *testing.T) {
 			case 0:
 				t.Errorf("%s (tier=e2e) has no TestAC_%s test under tests/e2e/", r.id, strings.ReplaceAll(r.id, "AC-", ""))
 			case 1:
+				// A2: the discovered TestAC_<CAT>_<NN>_* function name must
+				// also be the one the row's own Test column names — without
+				// this, renaming the Test cell to a nonexistent function (or
+				// repointing it at some other test entirely) still passes,
+				// since nothing here ever reads r.test for an e2e row.
+				if !slices.Contains(testNamesIn(r.test), names[0]) {
+					t.Errorf("%s (tier=e2e): Test column %q does not name %s, the TestAC_* function actually found for this AC ID", r.id, r.test, names[0])
+				}
 			default:
 				t.Errorf("%s (tier=e2e) has %d TestAC_* tests, want exactly 1: %v", r.id, len(names), names)
 			}
@@ -274,6 +283,13 @@ func e2eTestIDs(dir string) (map[string][]string, error) {
 // regardless of build tag (same rationale as e2eTestIDs) or directory —
 // this is what backs rule (d): a unit/integration-tier AC's named test may
 // live anywhere in the tree.
+//
+// T4: dot-directories (.git, a worktree's .worktrees, a sandcastle's
+// .sandcastle/worktrees, ...) are skipped outright, and a _test.go file
+// that fails to parse is skipped rather than aborting the whole walk — a
+// stray or in-progress file under a worktree or scratch dir should never
+// break `just gate` for a reason that has nothing to do with the AC-ID
+// <-> test mapping this function backs.
 func allTestFuncNames(root string) (map[string]bool, error) {
 	fset := token.NewFileSet()
 	names := make(map[string]bool)
@@ -282,7 +298,7 @@ func allTestFuncNames(root string) (map[string]bool, error) {
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() == ".git" || d.Name() == "bin" {
+			if d.Name() == "bin" || (d.Name() != "." && strings.HasPrefix(d.Name(), ".")) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -292,7 +308,7 @@ func allTestFuncNames(root string) (map[string]bool, error) {
 		}
 		f, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
-			return fmt.Errorf("parsing %s: %w", path, err)
+			return nil
 		}
 		for _, decl := range f.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
