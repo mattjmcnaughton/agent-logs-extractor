@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Parse AI coding agent conversation logs (Claude Code, Codex) into a unified, queryable data model
+Parse AI coding agent conversation logs (Claude Code today; Codex not yet implemented — see below) into a unified, queryable data model
 
 Go CLI built with strict hexagonal (ports-and-adapters) architecture: Cobra
 as the driving adapter, slog for logging, and the Go toolchain (gofmt, go
@@ -54,6 +54,7 @@ internal/
   tools/scrubfixture/              # CLI over logfixture/scrub
   version/
 tests/e2e/                         # Black-box tests against the compiled binary (build tag e2e)
+tests/docs/                        # Untagged: mechanical drift check between the docs and the tree
 docs/                              # product/, technical/, adrs/, architecture, testing, acceptance, development
 ```
 
@@ -112,7 +113,9 @@ Progressive disclosure — pull in the relevant doc when the task touches it:
 - `docs/acceptance.md` — observable contract; every `AC-*` ID maps 1:1 to
   exactly one discharging test. **Read before changing user-visible
   behavior.**
-- `docs/development.md` — environment setup, debugging, common tasks.
+- `docs/development.md` — environment setup, debugging, common tasks, and
+  the step-by-step recipes for adding a new command, a new port and
+  adapter, or an acceptance criterion.
 - `docs/technical/tdd-mvp.md` — the nine core decisions in full, vendor
   format mappings, still-open questions. **Read before revisiting a
   settled design decision.**
