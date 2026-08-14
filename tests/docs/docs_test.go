@@ -17,6 +17,9 @@ package docs
 
 import (
 	"bufio"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -108,8 +111,12 @@ func readFile(t *testing.T, path string) string {
 // recipe name must start with a letter, so a version reference like
 // "`just 1.21.0`" (the just *tool's* pinned version, not a recipe
 // invocation) is never mistaken for one — every real recipe name in the
-// justfile starts with a letter.
-var justRecipeRefRe = regexp.MustCompile("`just ([a-zA-Z][a-zA-Z0-9_-]*)")
+// justfile starts with a letter. The gap between "just" and the recipe
+// name is \s+, not a literal space: the docs hard-wrap at ~72 columns, so
+// a backtick-quoted "just <recipe>" span sometimes wraps across a newline
+// inside its own backticks, and a literal-space regex would silently
+// never see those (the recipe name it needs is on the next source line).
+var justRecipeRefRe = regexp.MustCompile("`just\\s+([a-zA-Z][a-zA-Z0-9_-]*)")
 
 // TestJustRecipesReferencedInDocsExist asserts that every `just <recipe>`
 // invocation named in the docs is a recipe the justfile actually defines.
@@ -208,13 +215,21 @@ func isSeparatorCell(s string) bool {
 var backtickNameRe = regexp.MustCompile("`([A-Za-z0-9_]+)`")
 
 // namesFromCells extracts the first backtick-quoted identifier from each
-// cell, skipping any cell with none (e.g. a "—" placeholder cell).
-func namesFromCells(cells []string) []string {
-	var names []string
+// cell. A cell with no backtick-quoted identifier is a table-authoring
+// error for the two tables this backs (every row names one Go symbol) —
+// silently skipping it would let a whole row go unchecked (e.g. a row
+// rewritten as "| ExporterTYPO |" with no backticks), so it is reported as
+// a test failure via t.Errorf rather than dropped.
+func namesFromCells(t *testing.T, tableDesc string, cells []string) []string {
+	t.Helper()
+	names := make([]string, 0, len(cells))
 	for _, c := range cells {
-		if m := backtickNameRe.FindStringSubmatch(c); m != nil {
-			names = append(names, m[1])
+		m := backtickNameRe.FindStringSubmatch(c)
+		if m == nil {
+			t.Errorf("%s: a data row's first cell %q has no backtick-quoted identifier", tableDesc, c)
+			continue
 		}
+		names = append(names, m[1])
 	}
 	return names
 }
@@ -251,29 +266,42 @@ func realPortNames(t *testing.T, root string) map[string]bool {
 	return names
 }
 
-// TestPortNamesInArchitectureTableExist asserts that every backtick-quoted
-// name in docs/architecture.md's "## Ports" table's first column is a real
-// interface declared in internal/ports/. This is the mechanical form of the
-// plan's claim C: StoreRebuild is a fourth exported interface older docs
-// never mentioned, and this test is what stops a Ports table from silently
-// going stale (or being mistyped) again.
+// TestPortNamesInArchitectureTableExist asserts that docs/architecture.md's
+// "## Ports" table's first column and the set of interfaces declared under
+// internal/ports/ name exactly the same set — bidirectionally. This is the
+// mechanical form of the plan's claim C: StoreRebuild is a fourth exported
+// interface older docs never mentioned, and this test is what stops a
+// Ports table from silently going stale (a mistyped/dropped table entry,
+// checked table->tree) or from silently missing a new port (checked
+// tree->table, the direction that would otherwise let #10's codexsource
+// land with a Ports table nobody updated).
 func TestPortNamesInArchitectureTableExist(t *testing.T) {
 	root := repoRoot(t)
 	content := readFile(t, filepath.Join(root, "docs", "architecture.md"))
+	const tableDesc = `docs/architecture.md's "## Ports" table`
 
 	cells := parseMarkdownTable(content, "## Ports")
 	if len(cells) == 0 {
-		t.Fatal("parsed zero rows from docs/architecture.md's \"## Ports\" table; parseMarkdownTable or the doc's table shape is almost certainly broken")
+		t.Fatalf("parsed zero rows from %s; parseMarkdownTable or the doc's table shape is almost certainly broken", tableDesc)
 	}
-	names := namesFromCells(cells)
+	names := namesFromCells(t, tableDesc, cells)
 	if len(names) == 0 {
-		t.Fatal("parsed zero backtick-quoted port names from docs/architecture.md's \"## Ports\" table")
+		t.Fatalf("parsed zero backtick-quoted port names from %s", tableDesc)
+	}
+	nameSet := make(map[string]bool, len(names))
+	for _, n := range names {
+		nameSet[n] = true
 	}
 
 	real := realPortNames(t, root)
 	for _, n := range names {
 		if !real[n] {
-			t.Errorf("docs/architecture.md's Ports table names %q, which is not an interface declared in internal/ports/", n)
+			t.Errorf("%s names %q, which is not an interface declared in internal/ports/", tableDesc, n)
+		}
+	}
+	for n := range real {
+		if !nameSet[n] {
+			t.Errorf("internal/ports/ declares interface %q, which %s does not list", n, tableDesc)
 		}
 	}
 }
@@ -299,26 +327,157 @@ func realAdapterPackages(t *testing.T, root string) map[string]bool {
 	return names
 }
 
-// TestAdapterPackageNamesInArchitectureTableExist asserts that every
-// backtick-quoted name in docs/architecture.md's "## Adapters" table's
-// first column is a real package directory under internal/adapters/.
+// TestAdapterPackageNamesInArchitectureTableExist asserts that
+// docs/architecture.md's "## Adapters" table's first column and the set of
+// package directories under internal/adapters/ name exactly the same set —
+// bidirectionally, for the same reason TestPortNamesInArchitectureTableExist
+// checks the Ports table both ways: deleting the whole duckdbcli row would
+// pass a table->tree-only check, and a future internal/adapters/codexsource/
+// (#10) would go undocumented forever under a tree->table-only check.
 func TestAdapterPackageNamesInArchitectureTableExist(t *testing.T) {
 	root := repoRoot(t)
 	content := readFile(t, filepath.Join(root, "docs", "architecture.md"))
+	const tableDesc = `docs/architecture.md's "## Adapters" table`
 
 	cells := parseMarkdownTable(content, "## Adapters")
 	if len(cells) == 0 {
-		t.Fatal("parsed zero rows from docs/architecture.md's \"## Adapters\" table; parseMarkdownTable or the doc's table shape is almost certainly broken")
+		t.Fatalf("parsed zero rows from %s; parseMarkdownTable or the doc's table shape is almost certainly broken", tableDesc)
 	}
-	names := namesFromCells(cells)
+	names := namesFromCells(t, tableDesc, cells)
 	if len(names) == 0 {
-		t.Fatal("parsed zero backtick-quoted adapter package names from docs/architecture.md's \"## Adapters\" table")
+		t.Fatalf("parsed zero backtick-quoted adapter package names from %s", tableDesc)
+	}
+	nameSet := make(map[string]bool, len(names))
+	for _, n := range names {
+		nameSet[n] = true
 	}
 
 	real := realAdapterPackages(t, root)
 	for _, n := range names {
 		if !real[n] {
-			t.Errorf("docs/architecture.md's Adapters table names %q, which is not a package directory under internal/adapters/", n)
+			t.Errorf("%s names %q, which is not a package directory under internal/adapters/", tableDesc, n)
+		}
+	}
+	for n := range real {
+		if !nameSet[n] {
+			t.Errorf("internal/adapters/%s/ exists, but %s does not list it", n, tableDesc)
+		}
+	}
+}
+
+// --- cited test-name existence (N3 / A15) -----------------------------------
+
+// docTestNameRe matches a backtick-quoted TestXxx identifier anywhere in
+// prose, e.g. "`TestScriptPopulatedMatchesGolden`".
+var docTestNameRe = regexp.MustCompile("`(Test[A-Za-z0-9_]+)`")
+
+// testNamePlaceholder is the one backtick-quoted "Test..." span that is
+// documented shorthand, not a citation of a real function — both
+// docs/testing.md and docs/development.md use `TestXxx` to mean "a test
+// function", generically, when describing rule (d) of the AC-ID mapping.
+const testNamePlaceholder = "TestXxx"
+
+// testNameDocPaths is docPaths' set plus the two other docs known to cite
+// real Test... function names by their bare identifier:
+// docs/technical/tdd-mvp.md (where A5's dead citation to
+// TestBothScriptFormsDeclareTheSameSchema lived until b37940d fixed it by
+// hand) and docs/acceptance.md (whose §2 index table cites TestAC_* and
+// TestCookbookQueries*/TestMain names directly in prose, not only inside
+// table cells rule (d)/(e) already check).
+func testNameDocPaths(t *testing.T, root string) []string {
+	t.Helper()
+	paths := docPaths(t, root)
+	paths = append(paths,
+		filepath.Join(root, "docs", "technical", "tdd-mvp.md"),
+		filepath.Join(root, "docs", "acceptance.md"),
+	)
+	return paths
+}
+
+// allTestFuncNames walks the whole repo and returns the set of every
+// top-level TestXxx function name declared in any *_test.go file,
+// regardless of build tag or directory. Duplicated from
+// tests/e2e/coverage_test.go's function of the same name (same idea, same
+// body) per this package's existing duplication convention — see
+// repoRoot's doc comment above — rather than shared.
+func allTestFuncNames(t *testing.T, root string) map[string]bool {
+	t.Helper()
+	fset := token.NewFileSet()
+	names := make(map[string]bool)
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == "bin" || (d.Name() != "." && strings.HasPrefix(d.Name(), ".")) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), "_test.go") {
+			return nil
+		}
+		f, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return nil
+		}
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv != nil {
+				continue
+			}
+			if strings.HasPrefix(fn.Name.Name, "Test") {
+				names[fn.Name.Name] = true
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking %s: %v", root, err)
+	}
+	return names
+}
+
+// TestDocCitedTestNamesExist asserts that every backtick-quoted `TestXxx`
+// identifier cited in the docs resolves to a real "func TestXxx" declared
+// somewhere in the repo — the `TestXxx` placeholder itself excepted. This
+// is the check that would have caught A5: a citation naming a test that
+// proves less than the prose claims is a different problem this check
+// cannot see, but a citation naming a test that flat-out does not exist
+// (this ticket had to fix exactly one of those by hand, in
+// docs/technical/tdd-mvp.md, before this test existed) is exactly what
+// this catches.
+func TestDocCitedTestNamesExist(t *testing.T) {
+	root := repoRoot(t)
+
+	real := allTestFuncNames(t, root)
+	if len(real) == 0 {
+		t.Fatal("found zero TestXxx function declarations anywhere in the repo; allTestFuncNames is almost certainly broken")
+	}
+
+	seen := map[string]bool{}
+	for _, path := range testNameDocPaths(t, root) {
+		content := readFile(t, path)
+		for _, m := range docTestNameRe.FindAllStringSubmatch(content, -1) {
+			name := m[1]
+			if name == testNamePlaceholder {
+				continue
+			}
+			seen[name] = true
+		}
+	}
+
+	// Anti-vacuity guard: a check that silently passes because it found
+	// nothing to check is as dangerous as a bug in the check itself
+	// (mirrors TestJustRecipesReferencedInDocsExist above,
+	// tests/e2e/coverage_test.go:51,58, and internal/core/arch_test.go:70).
+	if len(seen) == 0 {
+		t.Fatal("found zero cited `TestXxx` names across the docs; the scan (testNameDocPaths/docTestNameRe) is almost certainly broken")
+	}
+
+	for name := range seen {
+		if !real[name] {
+			t.Errorf("docs cite `%s`, which is not a func %s declared anywhere in the repo", name, name)
 		}
 	}
 }
