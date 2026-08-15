@@ -449,8 +449,9 @@ worth very little. The rest of `tests/release/` (untagged, so it runs in
 `just gate`) checks statically what can be checked without a build: the
 `-X` symbol path against `go.mod` and the source tree, the build target,
 the `workflow_run` binding to CI's workflow name, the Go version pin, the
-matrix, `.releaserc.json`'s shape, and `pnpm-lock.yaml`'s agreement with
-`package.json`.
+matrix and its asset names, the `release` → `build-binaries` output
+handoff, the `v` tag prefix, `.releaserc.json`'s plugin list and shape, and
+`pnpm-lock.yaml`'s agreement with `package.json`.
 
 ---
 

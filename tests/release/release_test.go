@@ -46,6 +46,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -465,16 +466,40 @@ var wantMatrixTargets = map[string]bool{
 // downloaded binary is self-identifying.
 const assetNamePrefix = "agent-logs-extractor-"
 
+// assetOSLabel / assetArchLabel translate a leg's GOOS/GOARCH into the
+// words the asset name uses. The two vocabularies deliberately differ —
+// `darwin` and `amd64` are Go's spelling, `macos` and `x86_64` are what a
+// human downloading a binary looks for — which is exactly why the mapping
+// has to be written down: nothing else in the repo relates the two, and
+// README.md's install table is written in the asset vocabulary.
+var (
+	assetOSLabel   = map[string]string{"linux": "linux", "darwin": "macos"}
+	assetArchLabel = map[string]string{"amd64": "x86_64", "arm64": "arm64"}
+)
+
 // TestReleaseWorkflowMatrixCoversFourTargets asserts the matrix ships
 // exactly the four intended platforms — no more (a leg nobody meant to add
 // silently uploads an asset) and no fewer (dropping darwin/arm64 in a
 // refactor would quietly stop shipping the most common developer
-// platform).
+// platform) — and that each leg's asset-name is unique and actually
+// describes the platform that leg builds.
+//
+// Both asset-name properties matter on their own. Two legs sharing one
+// asset-name upload the same filename to one Release and clobber each
+// other, leaving a release that looks complete and is missing a platform;
+// the `-o ${{ matrix.asset-name }}` check in
+// TestReleaseWorkflowBuildTargetExists cannot see this, because it only
+// proves the filename is per-leg-templated, not that the legs are
+// distinct. A leg whose name disagrees with its GOOS/GOARCH is worse than
+// missing: `agent-logs-extractor-macos-arm64` built with GOOS=linux runs
+// nowhere its name claims, and nothing downstream ever re-derives the
+// platform from the binary.
 func TestReleaseWorkflowMatrixCoversFourTargets(t *testing.T) {
 	root := repoRoot(t)
 	targets := releaseMatrixTargets(t, root)
 
 	got := make(map[string]bool, len(targets))
+	seenAsset := make(map[string]bool, len(targets))
 	for _, tgt := range targets {
 		if tgt.goos == "" || tgt.goarch == "" {
 			t.Errorf("matrix leg %q is missing goos and/or goarch (got goos=%q goarch=%q)", tgt.assetName, tgt.goos, tgt.goarch)
@@ -485,8 +510,25 @@ func TestReleaseWorkflowMatrixCoversFourTargets(t *testing.T) {
 			t.Errorf("matrix declares %s more than once", key)
 		}
 		got[key] = true
-		if !strings.HasPrefix(tgt.assetName, assetNamePrefix) {
-			t.Errorf("matrix leg %s has asset-name %q, want a name starting with %q", key, tgt.assetName, assetNamePrefix)
+
+		if seenAsset[tgt.assetName] {
+			t.Errorf("matrix declares asset-name %q more than once (second time on leg %s); two legs writing one filename upload two assets under the same name to the same release, and the second clobbers the first", tgt.assetName, key)
+		}
+		seenAsset[tgt.assetName] = true
+
+		osLabel, okOS := assetOSLabel[tgt.goos]
+		archLabel, okArch := assetArchLabel[tgt.goarch]
+		if !okOS || !okArch {
+			// An unrecognized platform is reported by the intended-target
+			// comparison below; all this check can still say is that the
+			// name is at least self-identifying.
+			if !strings.HasPrefix(tgt.assetName, assetNamePrefix) {
+				t.Errorf("matrix leg %s has asset-name %q, want a name starting with %q", key, tgt.assetName, assetNamePrefix)
+			}
+			continue
+		}
+		if want := assetNamePrefix + osLabel + "-" + archLabel; tgt.assetName != want {
+			t.Errorf("matrix leg %s has asset-name %q, want %q; the asset a user downloads must name the platform it was actually built for", key, tgt.assetName, want)
 		}
 	}
 
@@ -506,10 +548,75 @@ func TestReleaseWorkflowMatrixCoversFourTargets(t *testing.T) {
 
 // releasercConfig is the subset of .releaserc.json these checks read.
 // Plugins are a heterogeneous array: a bare string, or a [name, options]
-// pair — hence json.RawMessage rather than a typed shape.
+// pair — hence json.RawMessage rather than a typed shape. TagFormat is a
+// *string so "absent" (semantic-release's default applies) is
+// distinguishable from "set to the empty string".
 type releasercConfig struct {
-	Branches []string          `json:"branches"`
-	Plugins  []json.RawMessage `json:"plugins"`
+	Branches  []string          `json:"branches"`
+	TagFormat *string           `json:"tagFormat"`
+	Plugins   []json.RawMessage `json:"plugins"`
+}
+
+// loadReleaserc parses .releaserc.json. It t.Fatals on a malformed file:
+// semantic-release only discovers that at run time, which on this pipeline
+// means after a merge to main.
+func loadReleaserc(t *testing.T, root string) releasercConfig {
+	t.Helper()
+	var cfg releasercConfig
+	if err := json.Unmarshal([]byte(readFile(t, filepath.Join(root, ".releaserc.json"))), &cfg); err != nil {
+		t.Fatalf(".releaserc.json does not parse as JSON: %v", err)
+	}
+	return cfg
+}
+
+// pluginNames returns .releaserc.json's plugin names in declaration order,
+// accepting both forms a plugin entry can take (a bare name, or a
+// [name, options] pair). It t.Fatals on an entry of neither shape and on an
+// empty plugin list, so the order comparison below can never be vacuous.
+func pluginNames(t *testing.T, cfg releasercConfig) []string {
+	t.Helper()
+	names := make([]string, 0, len(cfg.Plugins))
+	for i, raw := range cfg.Plugins {
+		var bare string
+		if err := json.Unmarshal(raw, &bare); err == nil {
+			names = append(names, bare)
+			continue
+		}
+		var pair []json.RawMessage
+		if err := json.Unmarshal(raw, &pair); err != nil || len(pair) == 0 {
+			t.Fatalf(".releaserc.json plugin #%d is neither a name nor a [name, options] pair: %s", i, raw)
+		}
+		var name string
+		if err := json.Unmarshal(pair[0], &name); err != nil {
+			t.Fatalf(".releaserc.json plugin #%d's first element is not a plugin name: %s", i, pair[0])
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		t.Fatal(".releaserc.json declares zero plugins; every check below would be vacuous")
+	}
+	return names
+}
+
+// wantPlugins is .releaserc.json's plugin list, in order. The order is
+// semantics, not formatting: semantic-release runs every lifecycle step
+// through the plugins in exactly this sequence, so
+//
+//   - changelog must precede git, or git commits the CHANGELOG.md as it
+//     stood before this release's notes were written into it;
+//   - exec must be present at all, or nothing ever writes
+//     new-release-version / new-release-published to $GITHUB_OUTPUT and the
+//     build-binaries job is skipped — a release with zero binaries, green.
+//
+// Neither failure is visible before a merge to main: `just release-dry-run`
+// skips the publish step, which is the only step exec is wired into.
+var wantPlugins = []string{
+	"@semantic-release/commit-analyzer",
+	"@semantic-release/release-notes-generator",
+	"@semantic-release/changelog",
+	"@semantic-release/git",
+	"@semantic-release/github",
+	"@semantic-release/exec",
 }
 
 // pluginOptions returns the options object of the named plugin, or nil if
@@ -541,14 +648,15 @@ func pluginOptions(t *testing.T, cfg releasercConfig, name string) map[string]an
 // TestReleasercIsWellFormed asserts .releaserc.json parses as JSON at all
 // (semantic-release fails at run time on a malformed config, which on this
 // pipeline means discovering it only after a merge to main) and that the
-// three settings the rest of the pipeline actually depends on are present.
+// settings the rest of the pipeline actually depends on are present: the
+// branch, the full plugin list in order, the release commit's message, and
+// the changelog file and title.
 func TestReleasercIsWellFormed(t *testing.T) {
 	root := repoRoot(t)
-	raw := readFile(t, filepath.Join(root, ".releaserc.json"))
+	cfg := loadReleaserc(t, root)
 
-	var cfg releasercConfig
-	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
-		t.Fatalf(".releaserc.json does not parse as JSON: %v", err)
+	if got := pluginNames(t, cfg); !slices.Equal(got, wantPlugins) {
+		t.Errorf(".releaserc.json plugins = %v,\nwant exactly %v, in that order — see wantPlugins for what each ordering constraint buys", got, wantPlugins)
 	}
 
 	if len(cfg.Branches) != 1 || cfg.Branches[0] != "main" {
@@ -578,6 +686,238 @@ func TestReleasercIsWellFormed(t *testing.T) {
 	}
 	if got, _ := changelogOpts["changelogFile"].(string); got != "CHANGELOG.md" {
 		t.Errorf("@semantic-release/changelog changelogFile = %q, want \"CHANGELOG.md\" — the same path @semantic-release/git commits as an asset", got)
+	}
+	// changelogTitle is this config's one deliberate divergence from the
+	// sibling repos' baseline: without it the generated CHANGELOG.md opens
+	// straight at the first version heading and has no document title. It
+	// must also stay inside the changelog plugin's own options — hoisted to
+	// a top-level key it is silently ignored, since semantic-release passes
+	// unknown root keys to nothing.
+	if got, _ := changelogOpts["changelogTitle"].(string); got != "# Changelog" {
+		t.Errorf("@semantic-release/changelog changelogTitle = %q, want \"# Changelog\"", got)
+	}
+}
+
+// --- the release -> build-binaries output handoff --------------------------
+
+// releaseOutputNames are the two names the entire release -> build-binaries
+// handoff is built on, in sorted order. Four files have to agree on them:
+// .releaserc.json's exec plugin writes them to $GITHUB_OUTPUT, release.yml's
+// `outputs:` block re-exports them from the semantic step, build-binaries'
+// `if:` gates on one and its `ref:`/`tag_name:`/-ldflags interpolate the
+// other.
+var releaseOutputNames = []string{"new-release-published", "new-release-version"}
+
+// githubOutputWriteRe matches one `echo "<name>=<value>" >> $GITHUB_OUTPUT`
+// write inside the exec plugin's publishCmd, capturing the output name. The
+// `>> $GITHUB_OUTPUT` half is part of the pattern on purpose: an echo that
+// went anywhere else sets no step output at all.
+var githubOutputWriteRe = regexp.MustCompile(`"([a-z][a-z0-9-]*)=[^"]*"\s*>>\s*"?\$GITHUB_OUTPUT"?`)
+
+// jobHeaderRe matches a job key inside release.yml's `jobs:` mapping: two
+// spaces, a name, a colon, nothing else on the line.
+var jobHeaderRe = regexp.MustCompile(`^  ([a-z][a-z0-9-]*):\s*$`)
+
+// releaseJobBlock returns the lines of release.yml belonging to the named
+// job — everything after its `  <name>:` header up to the next key at that
+// indentation. It t.Fatals if the job is absent or its block is empty:
+// either means the workflow's job names drifted, and every check reading
+// the block would otherwise go quietly vacuous.
+func releaseJobBlock(t *testing.T, root, job string) string {
+	t.Helper()
+	var block []string
+	inJob := false
+	sc := bufio.NewScanner(strings.NewReader(releaseWorkflow(t, root)))
+	for sc.Scan() {
+		line := sc.Text()
+		if m := jobHeaderRe.FindStringSubmatch(line); m != nil {
+			inJob = m[1] == job
+			continue
+		}
+		if inJob {
+			block = append(block, line)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		t.Fatalf("scanning %s: %v", releaseWorkflowPath, err)
+	}
+	if len(block) == 0 {
+		t.Fatalf("found no `%s:` job in %s; the workflow's job names have drifted", job, releaseWorkflowPath)
+	}
+	return strings.Join(block, "\n")
+}
+
+var (
+	// jobOutputRe matches one `<name>: ${{ steps.<id>.outputs.<name> }}`
+	// line of a job's `outputs:` block.
+	jobOutputRe = regexp.MustCompile(`(?m)^\s*([a-z][a-z0-9-]*):\s*\$\{\{ steps\.([a-z0-9_-]+)\.outputs\.([a-z0-9-]+) \}\}\s*$`)
+	// stepIDRe matches a step's `id:`.
+	stepIDRe = regexp.MustCompile(`(?m)^\s*id:\s*(\S+)\s*$`)
+	// jobIfRe matches a job-level `if:` (four-space indent — a step's `if:`
+	// is indented further).
+	jobIfRe = regexp.MustCompile(`(?m)^    if:\s*(\S.*?)\s*$`)
+	// needsOutputRe matches a `needs.<job>.outputs.<name>` reference.
+	needsOutputRe = regexp.MustCompile(`needs\.([a-z0-9-]+)\.outputs\.([a-z0-9-]+)`)
+)
+
+// TestReleaseOutputHandoffIsWired proves the four links of the chain that
+// decides whether a release ships any binaries at all:
+//
+//	.releaserc.json exec publishCmd -> $GITHUB_OUTPUT
+//	   -> release.yml `outputs:` (re-exported from the `semantic` step)
+//	      -> build-binaries `if:` (whether the job runs)
+//	         -> build-binaries `ref:` / `tag_name:` / -ldflags (what it builds)
+//
+// Every link is a bare string matched at run time by GitHub Actions, and
+// every break in it is silent. A renamed output makes `outputs:` evaluate
+// to the empty string, the `if:` compare false, and the release publish a
+// tag and a GitHub Release with zero assets attached — with a fully green
+// workflow. Worse, an empty version turns `ref: v${{ ... }}` into `ref: v`,
+// which checks out nothing, after the tag and Release are already public.
+//
+// None of this is reachable before a merge: release.yml's `workflow_run`
+// trigger cannot fire from a pull request, and `just release-dry-run` skips
+// the publish step, which is the only lifecycle step the exec plugin runs
+// in. This test is the only pre-merge proof the chain is connected.
+func TestReleaseOutputHandoffIsWired(t *testing.T) {
+	root := repoRoot(t)
+
+	// (1) producer: the exec plugin's publishCmd writes exactly the two
+	// names, and writes them to $GITHUB_OUTPUT.
+	execOpts := pluginOptions(t, loadReleaserc(t, root), "@semantic-release/exec")
+	if execOpts == nil {
+		t.Fatalf(".releaserc.json configures no @semantic-release/exec options; nothing writes %v to $GITHUB_OUTPUT, so %s's build-binaries job would never run", releaseOutputNames, releaseWorkflowPath)
+	}
+	publishCmd, _ := execOpts["publishCmd"].(string)
+	if publishCmd == "" {
+		t.Fatal("@semantic-release/exec declares no publishCmd string")
+	}
+	writes := githubOutputWriteRe.FindAllStringSubmatch(publishCmd, -1)
+	if len(writes) == 0 {
+		t.Fatalf("@semantic-release/exec publishCmd %q writes nothing to $GITHUB_OUTPUT; githubOutputWriteRe or the command's shape has drifted", publishCmd)
+	}
+	written := make([]string, 0, len(writes))
+	for _, m := range writes {
+		written = append(written, m[1])
+	}
+	slices.Sort(written)
+	written = slices.Compact(written)
+	if !slices.Equal(written, releaseOutputNames) {
+		t.Errorf("@semantic-release/exec publishCmd writes %v to $GITHUB_OUTPUT, want exactly %v.\n"+
+			"These names are matched as strings by %s's `outputs:` block — renaming one here and nowhere else silently ships a release with no binaries.",
+			written, releaseOutputNames, releaseWorkflowPath)
+	}
+
+	// (2) re-export: the release job's `outputs:` names the same two, and
+	// reads them from a step that actually exists.
+	releaseBlock := releaseJobBlock(t, root, "release")
+	outs := jobOutputRe.FindAllStringSubmatch(releaseBlock, -1)
+	if len(outs) == 0 {
+		t.Fatalf("parsed zero `<name>: ${{ steps.<id>.outputs.<name> }}` lines from %s's release job; jobOutputRe or the job's shape has drifted", releaseWorkflowPath)
+	}
+	stepIDs := stepIDRe.FindAllStringSubmatch(releaseBlock, -1)
+	if len(stepIDs) == 0 {
+		t.Fatalf("parsed zero step `id:`s from %s's release job; stepIDRe or the job's shape has drifted", releaseWorkflowPath)
+	}
+	haveStepID := make(map[string]bool, len(stepIDs))
+	for _, m := range stepIDs {
+		haveStepID[m[1]] = true
+	}
+	exported := make([]string, 0, len(outs))
+	for _, m := range outs {
+		jobOutput, stepID, stepOutput := m[1], m[2], m[3]
+		exported = append(exported, jobOutput)
+		if !haveStepID[stepID] {
+			t.Errorf("%s's release job exports output %q from step %q, but no step in that job declares `id: %s`; the expression evaluates to the empty string", releaseWorkflowPath, jobOutput, stepID, stepID)
+		}
+		if !slices.Contains(releaseOutputNames, stepOutput) {
+			t.Errorf("%s's release job exports output %q from steps.%s.outputs.%s, which @semantic-release/exec never writes (it writes %v); the expression evaluates to the empty string", releaseWorkflowPath, jobOutput, stepID, stepOutput, releaseOutputNames)
+		}
+		if jobOutput != stepOutput {
+			t.Errorf("%s's release job exports output %q from steps.%s.outputs.%s; the two names must match, or downstream `needs.release.outputs.*` references silently read the wrong one", releaseWorkflowPath, jobOutput, stepID, stepOutput)
+		}
+	}
+	slices.Sort(exported)
+	exported = slices.Compact(exported)
+	if !slices.Equal(exported, releaseOutputNames) {
+		t.Errorf("%s's release job declares outputs %v, want exactly %v", releaseWorkflowPath, exported, releaseOutputNames)
+	}
+
+	// (3) consumer: build-binaries' `if:` gates on new-release-published,
+	// read off the release job.
+	buildBlock := releaseJobBlock(t, root, "build-binaries")
+	ifs := jobIfRe.FindAllStringSubmatch(buildBlock, -1)
+	if len(ifs) != 1 {
+		t.Fatalf("found %d job-level `if:` conditions in %s's build-binaries job, want exactly 1", len(ifs), releaseWorkflowPath)
+	}
+	gate := ifs[0][1]
+	refs := needsOutputRe.FindAllStringSubmatch(gate, -1)
+	if len(refs) == 0 {
+		t.Fatalf("build-binaries' `if: %s` references no `needs.<job>.outputs.<name>`; with nothing gating it the job runs on every release attempt, including ones that published nothing", gate)
+	}
+	gatesOnPublished := false
+	for _, m := range refs {
+		job, output := m[1], m[2]
+		if job != "release" {
+			t.Errorf("build-binaries' `if: %s` reads needs.%s.outputs.%s, but only the release job declares outputs", gate, job, output)
+			continue
+		}
+		if !slices.Contains(exported, output) {
+			t.Errorf("build-binaries' `if: %s` reads needs.release.outputs.%s, which the release job does not declare (it declares %v); the condition is always false and NO binaries are ever built", gate, output, exported)
+			continue
+		}
+		if output == "new-release-published" {
+			gatesOnPublished = true
+		}
+	}
+	if !gatesOnPublished {
+		t.Errorf("build-binaries' `if: %s` does not gate on new-release-published; that output is the only signal that a release was actually cut", gate)
+	}
+
+	// (4) the -ldflags version expression names a declared output too. The
+	// symbol path side of this flag is covered by
+	// TestReleaseWorkflowLdflagsPathMatchesTree; this is the value side.
+	ldflagsRefs := needsOutputRe.FindAllStringSubmatch(releaseLdflags(t, root), -1)
+	if len(ldflagsRefs) != 1 {
+		t.Fatalf("found %d `needs.<job>.outputs.<name>` references in %s's -ldflags argument, want exactly 1", len(ldflagsRefs), releaseWorkflowPath)
+	}
+	if job, output := ldflagsRefs[0][1], ldflagsRefs[0][2]; job != "release" || output != "new-release-version" {
+		t.Errorf("%s's -ldflags injects needs.%s.outputs.%s; want needs.release.outputs.new-release-version, or every shipped binary reports an empty version", releaseWorkflowPath, job, output)
+	}
+}
+
+// defaultTagFormat is semantic-release's built-in tagFormat. release.yml's
+// `ref:` and `tag_name:` both hardcode the `v` this produces.
+const defaultTagFormat = "v${version}"
+
+// TestReleaseTagFormatMatchesItsConsumers asserts the `v` prefix that
+// release.yml's build-binaries job hardcodes in two places is the prefix
+// semantic-release will actually have tagged with.
+//
+// The coupling is invisible in both directions today: .releaserc.json says
+// nothing about tagFormat (so the default applies) and release.yml just
+// writes a literal `v`. Adding a tagFormat later — a perfectly reasonable
+// thing to do — would leave build-binaries checking out a tag that does not
+// exist, and uploading assets to a Release under a name nothing points at,
+// after the tag and Release are already public.
+func TestReleaseTagFormatMatchesItsConsumers(t *testing.T) {
+	root := repoRoot(t)
+
+	if got := loadReleaserc(t, root).TagFormat; got != nil && *got != defaultTagFormat {
+		t.Errorf(".releaserc.json sets tagFormat = %q, but %s hardcodes a `v` prefix at its `ref:` and `tag_name:`; either keep the default %q or update both consumers", *got, releaseWorkflowPath, defaultTagFormat)
+	}
+
+	content := releaseWorkflow(t, root)
+	want := "v" + releaseVersionExpr
+	for _, key := range []string{"ref", "tag_name"} {
+		re := regexp.MustCompile(`(?m)^\s*` + key + `:\s*(\S.*?)\s*$`)
+		matches := re.FindAllStringSubmatch(content, -1)
+		if len(matches) != 1 {
+			t.Fatalf("found %d `%s:` keys in %s, want exactly 1", len(matches), key, releaseWorkflowPath)
+		}
+		if matches[0][1] != want {
+			t.Errorf("%s's `%s: %s`, want %q — semantic-release tags %q, so the leading `v` is not optional", releaseWorkflowPath, key, matches[0][1], want, defaultTagFormat)
+		}
 	}
 }
 

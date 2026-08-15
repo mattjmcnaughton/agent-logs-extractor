@@ -10,9 +10,9 @@ See `docs/product/prd-mvp.md` for scope and `docs/technical/tdd-mvp.md` for the 
 
 ## Install
 
-Prebuilt binaries are attached to every [GitHub
-release](https://github.com/mattjmcnaughton/agent-logs-extractor/releases),
-each one both raw and as a `.tar.gz`:
+From `v1.0.0` onward, each [GitHub
+release](https://github.com/mattjmcnaughton/agent-logs-extractor/releases)
+carries prebuilt binaries, each one both raw and as a `.tar.gz`:
 
 | Asset | Platform |
 |---|---|

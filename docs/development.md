@@ -186,19 +186,30 @@ loads, and what next version the commits on the current branch compute to.
 semantic-release refuses to compute anything off a branch that is not
 `main`.
 
-It does **not** prove the part that matters most: `--dry-run` skips the
-publish step, so `@semantic-release/exec` never runs and the
-`$GITHUB_OUTPUT` handoff that `build-binaries` depends on stays unproven
-until a real run on `main`. It also needs network access and a
-`$GITHUB_TOKEN`, which is why it is deliberately **not** part of
-`just gate`/`just gate-expensive`.
+It does **not** run `@semantic-release/exec`: `--dry-run` skips the publish
+step, the only lifecycle step that plugin is wired into. It also needs
+network access and a `$GITHUB_TOKEN`, which is why it is deliberately
+**not** part of `just gate`/`just gate-expensive`.
 
 What *is* gated: `tests/release/`'s untagged checks run in `just gate`
 (the `-X` symbol path against `go.mod` and the source, the build target,
 the `workflow_run` binding to CI's workflow `name:`, the Go version pin,
-the matrix, `.releaserc.json`'s shape, and `pnpm-lock.yaml`'s agreement
-with `package.json`), and `TestReleaseLdflagsInjectVersion` /
-`TestReleaseMatrixTargetsCompile` run in `just gate-expensive`.
+the matrix and its asset names, the `release` → `build-binaries` output
+handoff, the `v` tag prefix, `.releaserc.json`'s plugin list and shape, and
+`pnpm-lock.yaml`'s agreement with `package.json`), and
+`TestReleaseLdflagsInjectVersion` / `TestReleaseMatrixTargetsCompile` run
+in `just gate-expensive`.
+
+`TestReleaseOutputHandoffIsWired` is worth calling out: it pins the
+`new-release-version` / `new-release-published` names across all four
+places that must agree on them — `publishCmd`'s `$GITHUB_OUTPUT` writes,
+the `release` job's `outputs:` block, `build-binaries`' `if:`, and the
+`-ldflags` version expression. Every break in that chain is silent (a
+renamed output makes the `if:` compare false and publishes a tag and a
+Release with zero binaries attached, green), and none of it is reachable
+before a merge. What is still unproven until the first real release is only
+the run-time half: that the publish step fires and that the redirect lands
+in `$GITHUB_OUTPUT`.
 
 ## Adding a New Command
 
