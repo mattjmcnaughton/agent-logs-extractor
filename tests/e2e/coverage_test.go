@@ -289,7 +289,10 @@ func e2eTestIDs(dir string) (map[string][]string, error) {
 // that fails to parse is skipped rather than aborting the whole walk — a
 // stray or in-progress file under a worktree or scratch dir should never
 // break `just gate` for a reason that has nothing to do with the AC-ID
-// <-> test mapping this function backs.
+// <-> test mapping this function backs. node_modules (the release
+// pipeline's semantic-release install, gitignored) is skipped for the same
+// reason: nothing vendored under it is ours, and a transitive dependency
+// shipping a *_test.go would otherwise be parsed — and could fatal — here.
 func allTestFuncNames(root string) (map[string]bool, error) {
 	fset := token.NewFileSet()
 	names := make(map[string]bool)
@@ -298,7 +301,7 @@ func allTestFuncNames(root string) (map[string]bool, error) {
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() == "bin" || (d.Name() != "." && strings.HasPrefix(d.Name(), ".")) {
+			if d.Name() == "bin" || d.Name() == "node_modules" || (d.Name() != "." && strings.HasPrefix(d.Name(), ".")) {
 				return filepath.SkipDir
 			}
 			return nil
