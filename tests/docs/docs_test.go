@@ -409,7 +409,7 @@ func allTestFuncNames(t *testing.T, root string) map[string]bool {
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() == "bin" || (d.Name() != "." && strings.HasPrefix(d.Name(), ".")) {
+			if d.Name() == "bin" || d.Name() == "node_modules" || (d.Name() != "." && strings.HasPrefix(d.Name(), ".")) {
 				return filepath.SkipDir
 			}
 			return nil

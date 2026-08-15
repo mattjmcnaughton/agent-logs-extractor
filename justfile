@@ -1,10 +1,16 @@
-# Check formatting (exits 1 if any files need formatting)
+# Check formatting (exits 1 if any files need formatting).
+#
+# Scoped to the three directories that hold Go source rather than `.`: a
+# bare `gofmt -l .` also walks node_modules/ (the release pipeline's
+# semantic-release install — thousands of files, none of them ours). The
+# scoping is lossless: no .go file in this repo lives outside cmd/,
+# internal/, and tests/.
 fmt:
-    @if [ -n "$(gofmt -l .)" ]; then gofmt -l .; exit 1; fi
+    @if [ -n "$(gofmt -l ./cmd ./internal ./tests)" ]; then gofmt -l ./cmd ./internal ./tests; exit 1; fi
 
-# Fix formatting
+# Fix formatting (same three directories as `fmt`, same reason)
 fmt-fix:
-    gofmt -w .
+    gofmt -w ./cmd ./internal ./tests
 
 # Run go vet
 vet:
