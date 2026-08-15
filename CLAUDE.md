@@ -23,6 +23,7 @@ vet, go test).
 | `just run [args]` | Run via `go run` |
 | `just tidy` | Tidy dependencies |
 | `just scrub-fixture` | Scrub a real vendor session tree into a committable fixture |
+| `just release-dry-run` | Ask semantic-release what it *would* release; needs `pnpm install`, network, a token. Opt-in, never gated. |
 | `just gate` | Fast pre-push check: `fmt` + `vet` + `test` |
 | `just gate-expensive` | Full check: `gate` + `test-integration` |
 
@@ -55,6 +56,7 @@ internal/
   version/
 tests/e2e/                         # Black-box tests against the compiled binary (build tag e2e)
 tests/docs/                        # Untagged: mechanical drift check between the docs and the tree
+tests/release/                     # Untagged + integration: the release workflow's ldflags path vs. the tree
 docs/                              # product/, technical/, adrs/, architecture, testing, acceptance, development
 ```
 
@@ -97,6 +99,23 @@ in `docs/architecture.md`.
   e2e never run as part of `just gate`/`just gate-expensive`.
 - **Version** is defined as `"dev"` by default and overridden at build time
   with `-ldflags "-X github.com/mattjmcnaughton/agent-logs-extractor/internal/version.Version=x.y.z"`.
+  `.github/workflows/release.yml` passes exactly that flag when building
+  release binaries. A `-X` path is only a string to the linker — spell it
+  wrong and the link still succeeds while the binary reports `dev` — so
+  `tests/release/` guards it from both ends: statically against `go.mod`
+  and the source tree (`TestReleaseWorkflowLdflagsPathMatchesTree`,
+  untagged, runs in `just gate`), and end-to-end by building with the
+  workflow's own flag string and running `version`
+  (`TestReleaseLdflagsInjectVersion`, integration tier, AC-RELEASE-01).
+- **Releases are cut by semantic-release from conventional commits.**
+  Merging a `feat:`/`fix:` to `main` bumps the version, writes
+  `CHANGELOG.md`, tags, and attaches four binaries (linux/macOS ×
+  x86_64/arm64). Config lives in `.releaserc.json` + `package.json` +
+  `pnpm-lock.yaml`; the pipeline is `.github/workflows/release.yml`,
+  triggered by `workflow_run` on the **CI** workflow, so a red CI blocks a
+  release. Never run bare `pnpm install` (it rewrites the lockfile) — only
+  `pnpm install --frozen-lockfile`. See `docs/development.md`'s
+  "Releasing".
 
 ## More Information
 

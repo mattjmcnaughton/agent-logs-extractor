@@ -56,6 +56,8 @@ tests/
   e2e/             # Black-box tests against the compiled binary (build tag e2e),
                    # one file per AC-ID category, plus the untagged coverage_test.go
   docs/            # Untagged: mechanical drift check between the docs and the tree
+  release/         # Untagged: release.yml read as data (ldflags path, CI binding, matrix,
+                   # .releaserc.json, pnpm lock) + an integration-tagged build-and-run proof
 docs/
   product/         # Product requirements (prd-mvp.md)
   technical/       # Technical design (tdd-mvp.md) — the nine core decisions live here
@@ -251,6 +253,20 @@ Go itself is pinned at `1.25.0` (`go.mod`); CI additionally pins `duckdb
 (`"1.4"`) documents the same floor in error messages, but is not a probed
 or tested contract across a version range (see `docs/technical/tdd-mvp.md`
 core decision 4's elaboration under "Settled by `internal/adapters/duckdbcli`").
+
+The release pipeline pins its own toolchain, entirely separately from the
+Go build: **Node 24.x** and **pnpm 11.1.2**
+(`.github/workflows/release.yml`'s `node-version`, `package.json`'s
+`packageManager` field, which `corepack` reads), plus exact — not
+caret-ranged — versions for **semantic-release 24.2.3** and each of its six
+plugins (`package.json`'s `devDependencies`, resolved transitively by the
+committed `pnpm-lock.yaml`, which CI installs with `--frozen-lockfile`).
+None of this is a dependency of the Go module: `go.mod` stays at Cobra +
+afero, and `tests/release/` deliberately parses `release.yml` and
+`pnpm-lock.yaml` with the standard library rather than buying a YAML
+library for a test's convenience. `release.yml`'s Go pin is additionally
+asserted equal to `ci.yml`'s by `TestReleaseWorkflowGoVersionMatchesCI`, so
+released binaries are always built by the toolchain the gate ran.
 
 ## The nine core decisions, and where they live
 
