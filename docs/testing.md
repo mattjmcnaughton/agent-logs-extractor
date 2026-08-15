@@ -362,9 +362,17 @@ Two consequences for testing:
   actually declares (`TestReleaseWorkflowBindsToTheCIWorkflowName` — a
   trigger naming a nonexistent workflow is not an error to GitHub, it just
   never fires), that the Go pins agree, that the matrix covers exactly four
-  targets, that `.releaserc.json` is well-formed, and that `pnpm-lock.yaml`
-  still matches `package.json` so `pnpm install --frozen-lockfile` cannot
-  fail on main. Those are untagged, so they run in `just gate`.
+  targets under four distinct asset names that each describe the platform
+  they were built for, that the `release` → `build-binaries` output handoff
+  agrees on `new-release-version`/`new-release-published` end to end
+  (`TestReleaseOutputHandoffIsWired` — a rename anywhere along that chain
+  publishes a tag and a GitHub Release with zero binaries attached, green),
+  that the `v` tag prefix `ref:`/`tag_name:` hardcode is the one
+  semantic-release will have tagged with, that `.releaserc.json` is
+  well-formed and lists its plugins in the order their side effects require,
+  and that `pnpm-lock.yaml` still matches `package.json` so
+  `pnpm install --frozen-lockfile` cannot fail on main. Those are untagged,
+  so they run in `just gate`.
   `TestReleaseLdflagsInjectVersion` (AC-RELEASE-01) and
   `TestReleaseMatrixTargetsCompile` carry the `integration` tag and run in
   `just gate-expensive`.

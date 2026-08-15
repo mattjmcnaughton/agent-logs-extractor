@@ -8,7 +8,11 @@
 # merges. Everything about it that CAN be proven without executing it is
 # proven by the `tests/release/` package (untagged + integration tiers),
 # which reads this file as data: the ldflags symbol path, the build target,
-# the CI-workflow binding below, the Go version pin, and the matrix.
+# the CI-workflow binding below, the Go version pin, the matrix and its
+# asset names, the `v` tag prefix, and the output handoff below — the
+# `outputs:` block, build-binaries' `if:`, and .releaserc.json's exec
+# plugin all have to agree on the same two output names, and a rename on
+# any one side would otherwise publish a release with zero binaries, green.
 
 name: Release
 

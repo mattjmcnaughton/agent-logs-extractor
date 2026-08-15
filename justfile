@@ -99,14 +99,16 @@ test-e2e-container:
 # from the installed node_modules, and what next version the conventional
 # commits on this branch compute to.
 #
-# It does NOT prove the part that actually matters most in CI: --dry-run
-# skips the publish step, so @semantic-release/exec never runs and the
-# `new-release-version`/`new-release-published` -> $GITHUB_OUTPUT wiring
-# that .github/workflows/release.yml's build-binaries job depends on stays
-# unproven until a real run on main. tests/release/ covers what can be
-# checked statically; this recipe covers config load and version
-# computation; the $GITHUB_OUTPUT handoff is proven only by the first real
-# release.
+# It does NOT execute @semantic-release/exec: --dry-run skips the publish
+# step, which is the only lifecycle step exec is wired into. The string
+# half of that handoff is pinned statically instead, by
+# TestReleaseOutputHandoffIsWired — publishCmd's two $GITHUB_OUTPUT names,
+# release.yml's `outputs:` block, build-binaries' `if:`, and the -ldflags
+# version expression all have to agree on `new-release-version` /
+# `new-release-published`, and a rename on any one side is red in
+# `just gate`. What remains unproven until the first real release on main
+# is only the run-time half: that the publish step fires at all and that
+# the redirect really lands in $GITHUB_OUTPUT.
 #
 # --branches is load-bearing: semantic-release refuses to compute anything
 # from a branch that is not in its configured `branches` list (["main"]),

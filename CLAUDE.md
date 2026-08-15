@@ -56,7 +56,7 @@ internal/
   version/
 tests/e2e/                         # Black-box tests against the compiled binary (build tag e2e)
 tests/docs/                        # Untagged: mechanical drift check between the docs and the tree
-tests/release/                     # Untagged + integration: the release workflow's ldflags path vs. the tree
+tests/release/                     # Untagged + integration: release.yml + .releaserc.json vs. the tree
 docs/                              # product/, technical/, adrs/, architecture, testing, acceptance, development
 ```
 
