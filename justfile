@@ -88,6 +88,32 @@ test-e2e-container:
     docker build -f Dockerfile.duckdb -t agent-logs-extractor-duckdb-test .
     docker run --rm --network none agent-logs-extractor-duckdb-test just test-e2e
 
+# Ask semantic-release what it WOULD do, without doing any of it. Proves
+# that .releaserc.json parses, that every plugin in it resolves and loads
+# from the installed node_modules, and what next version the conventional
+# commits on this branch compute to.
+#
+# It does NOT prove the part that actually matters most in CI: --dry-run
+# skips the publish step, so @semantic-release/exec never runs and the
+# `new-release-version`/`new-release-published` -> $GITHUB_OUTPUT wiring
+# that .github/workflows/release.yml's build-binaries job depends on stays
+# unproven until a real run on main. tests/release/ covers what can be
+# checked statically; this recipe covers config load and version
+# computation; the $GITHUB_OUTPUT handoff is proven only by the first real
+# release.
+#
+# --branches is load-bearing: semantic-release refuses to compute anything
+# from a branch that is not in its configured `branches` list (["main"]),
+# so running this from a feature branch without overriding it just prints
+# "this test run was triggered on the branch <x>, while semantic-release is
+# configured to only publish from main" and exits.
+#
+# Deliberately NOT part of `gate`/`gate-expensive`: it needs `pnpm install`
+# to have run, network access, and a $GITHUB_TOKEN — none of which the gate
+# promises. Run it by name when touching the release config.
+release-dry-run:
+    pnpm exec semantic-release --dry-run --no-ci --branches "$(git branch --show-current)"
+
 # `gate`/`gate-expensive` deliberately do NOT run test-contract or test-e2e
 # (do not "helpfully" add them here): test-contract needs a developer's
 # real vendor history to mean anything, and test-e2e needs a locally-built

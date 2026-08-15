@@ -12,3 +12,6 @@ dist/
 *.exe
 *.test
 vendor/
+
+# Node (release tooling)
+node_modules/
