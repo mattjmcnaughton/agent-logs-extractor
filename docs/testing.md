@@ -118,6 +118,7 @@ test-integration` (and as part of `just gate-expensive`).
 | `adapters/duckdbcli` | A real `duckdb` binary on `PATH` | `duckdbcli_integration_test.go` |
 | `adapters/duckdbcli` (cookbook) | Real `duckdb`, real export of the committed fixtures | `cookbook_integration_test.go` |
 | `core/sync` | Real fixture trees on a real temp filesystem | `sync_integration_test.go` |
+| `tests/release` | The real Go toolchain: builds with the release workflow's own `-ldflags`, cross-compiles all four matrix targets | `tests/release/ldflags_integration_test.go` |
 
 **The duckdb skip-vs-fail rule.** `internal/adapters/duckdbcli`'s
 integration tests need a real `duckdb` CLI on `PATH`; `requireDuckDB(t)`
@@ -170,7 +171,7 @@ is deliberate and mechanical: CI never sets `ALX_CONTRACT_CLAUDE_PATH`, and
 a contributor's own sandbox transcript (or any other live history) must
 never be read by accident just because the env var was forgotten. The
 variable is **test-only** — never read by the CLI or by wiring, never a
-flag, never documented in `README.md` (`docs/acceptance.md` §12 R3).
+flag, never documented in `README.md` (`docs/acceptance.md` §13 R3).
 
 **The two invocation recipes** (see `docs/development.md` for the exact
 command lines): point `ALX_CONTRACT_CLAUDE_PATH` at an empty directory to
@@ -309,8 +310,11 @@ heading/row and its discharging test in the same change.
 
 ## CI
 
-`.github/workflows/ci.yml` runs three jobs on every push and pull request
-to `main`:
+Two workflows, in sequence.
+
+### `.github/workflows/ci.yml` (**CI**)
+
+Runs three jobs on every push and pull request to `main`:
 
 - **`Gate`** — `just gate` on a plain Ubuntu runner (no duckdb install).
   Kept alongside the more expensive jobs deliberately, even though it's a
@@ -325,6 +329,45 @@ to `main`:
   container built from `Dockerfile.duckdb`, run with `docker run --network
   none`. Reuses `Dockerfile.duckdb`, not a second image, and can be
   reverted independently of the native job if it proves flaky.
+
+**No CI job runs the e2e or contract tier.** Both are opt-in, run by name
+(see the E2E and Contract tier sections above). This is why AC-RELEASE-01
+is discharged at the *integration* tier rather than the e2e tier: a
+criterion about the release pipeline that CI never executes would prove
+very little.
+
+### `.github/workflows/release.yml` (**Release**)
+
+Not triggered by a push at all. It fires via `workflow_run` on the **CI**
+workflow completing, and guards on
+`github.event.workflow_run.conclusion == 'success'` plus a `push` to `main`
+from this repository — so **any failing CI job blocks the release**, and a
+fork cannot drive it. It runs semantic-release, then cross-compiles and
+uploads four binaries against the tag semantic-release just cut. See
+`docs/development.md`'s "Releasing" for the full flow.
+
+Two consequences for testing:
+
+- **This workflow has never executed.** A `workflow_run` trigger by design
+  does not fire from a pull request, so the file's first real run is always
+  the first push to `main` after it merges — the same caveat
+  `Dockerfile.duckdb`'s containerized job carried when it landed.
+- **So it is tested by being read, not run.** `tests/release/` parses
+  `release.yml` as data and checks what can be checked without executing
+  it: that the `-ldflags` `-X` symbol path names a variable this tree
+  actually declares (`TestReleaseWorkflowLdflagsPathMatchesTree` — the
+  highest-value check here, since a wrong `-X` path links successfully and
+  silently ships binaries reporting `dev`), that the build target is a real
+  main package, that the `workflow_run` trigger names the workflow `ci.yml`
+  actually declares (`TestReleaseWorkflowBindsToTheCIWorkflowName` — a
+  trigger naming a nonexistent workflow is not an error to GitHub, it just
+  never fires), that the Go pins agree, that the matrix covers exactly four
+  targets, that `.releaserc.json` is well-formed, and that `pnpm-lock.yaml`
+  still matches `package.json` so `pnpm install --frozen-lockfile` cannot
+  fail on main. Those are untagged, so they run in `just gate`.
+  `TestReleaseLdflagsInjectVersion` (AC-RELEASE-01) and
+  `TestReleaseMatrixTargetsCompile` carry the `integration` tag and run in
+  `just gate-expensive`.
 
 ## See also
 
