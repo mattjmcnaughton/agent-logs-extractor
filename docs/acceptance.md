@@ -59,7 +59,7 @@ tier and the integration tier will disagree.
 
 Every e2e scenario runs against a fresh `sandbox` (`tests/e2e/setup_test.go`):
 an isolated home directory that backs **both** `HOME` and, by default,
-`AGENT_LOGS_EXTRACTOR_HOME` (decision D10, §12) — never the real host
+`AGENT_LOGS_EXTRACTOR_HOME` (decision D10, §13) — never the real host
 `HOME`. `AC-SANDBOX-03`
 is the one scenario that deliberately unsets `AGENT_LOGS_EXTRACTOR_HOME`
 from the child environment; `HOME` still points at the sandbox even then,
@@ -133,6 +133,7 @@ gate-expensive jobs, and the `test-e2e-container` image, all set it).
 | AC-SCOPE-01 | — | vendor sources are read-only: hash before/after a sync is unchanged | `TestAC_SCOPE_01_SourcesAreReadOnly` | e2e |
 | AC-SCOPE-02 | — | no config file is ever read or written | `TestAC_SCOPE_02_NoConfigFile` | e2e |
 | AC-SCOPE-03 | — | nothing reaches the network at run time | `just test-e2e-container` | container |
+| AC-RELEASE-01 | — | a binary built with release.yml's own ldflags reports the injected version, not `dev` | `TestReleaseLdflagsInjectVersion` (`tests/release`) | integration |
 
 ---
 
@@ -415,7 +416,45 @@ sensitive benchmark to assert honestly.
 
 ---
 
-## 11. User-story coverage
+## 11. Release pipeline
+
+**AC-RELEASE-01 — the release build's `-ldflags` actually injects the version**
+- Given: the `-ldflags` string read verbatim out of
+  `.github/workflows/release.yml`'s build step, with its
+  `${{ needs.release.outputs.new-release-version }}` expression replaced by
+  a sentinel version. The string is **read from the workflow**, never
+  hardcoded in the test — a hardcoded copy would only prove that Go's `-X`
+  mechanism works, which was never in doubt.
+- When: `./cmd/agent-logs-extractor` is built with exactly that `-ldflags`
+  string (`CGO_ENABLED=0`, host `GOOS`/`GOARCH`) and the resulting binary
+  is run as `agent-logs-extractor version`.
+- Then: exit `0`; stdout is exactly the sentinel version — in particular
+  **not** `dev`, the value compiled into `internal/version.Version` by
+  default.
+
+Why this is its own criterion rather than a stronger `AC-CLI-01`:
+`AC-CLI-01` asserts only that `version` exits `0` with non-empty stdout,
+and the whole e2e tier builds its binary with no `-ldflags` at all, so
+`dev` satisfies every other criterion in this document. A `-X` argument is
+just a string to the Go linker — it does not have to name a symbol that
+exists, and when it does not, the link succeeds silently and every shipped
+binary reports `dev`. This is the criterion that makes that failure loud.
+
+Discharged at the **integration** tier by `TestReleaseLdflagsInjectVersion`
+(`tests/release/ldflags_integration_test.go`), not at the e2e tier,
+because CI never runs the e2e tier: its three jobs run `just gate`,
+`just gate-expensive`, and the containerized `just test-integration`. A
+criterion about the release pipeline that CI does not execute would be
+worth very little. The rest of `tests/release/` (untagged, so it runs in
+`just gate`) checks statically what can be checked without a build: the
+`-X` symbol path against `go.mod` and the source tree, the build target,
+the `workflow_run` binding to CI's workflow name, the Go version pin, the
+matrix, `.releaserc.json`'s shape, and `pnpm-lock.yaml`'s agreement with
+`package.json`.
+
+---
+
+## 12. User-story coverage
 
 | Story | Criteria |
 |---|---|
@@ -429,7 +468,7 @@ sensitive benchmark to assert honestly.
 
 ---
 
-## 12. Resolved decisions
+## 13. Resolved decisions
 
 **R1 — Exit codes stay 0/1, not fetch-context's 0/1/2.** This ticket is
 tests-and-docs; adopting a three-way exit-code convention (success / runtime
