@@ -45,14 +45,31 @@ func runSuite(m *testing.M) (int, error) {
 		defer os.RemoveAll(dir)
 		alxbin = filepath.Join(dir, "agent-logs-extractor")
 		build := exec.Command("go", "build", "-o", alxbin, "./cmd/agent-logs-extractor")
-		// repoRootForCoverage (coverage_test.go, untagged so it's always
-		// part of this package) duplicated here byte-for-byte until this
-		// cleanup; call it instead of keeping a second copy.
-		build.Dir = repoRootForCoverage()
+		build.Dir = repoRoot()
 		if out, err := build.CombinedOutput(); err != nil {
 			return 0, fmt.Errorf("building binary under test: %v\n%s", err, out)
 		}
 		os.Setenv("ALXBIN", alxbin)
 	}
 	return m.Run(), nil
+}
+
+// repoRoot walks up from the test's working directory to the directory
+// containing go.mod, so the build below runs from the module root
+// regardless of where `go test` was invoked.
+func repoRoot() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			panic("go.mod not found above " + dir)
+		}
+		dir = parent
+	}
 }

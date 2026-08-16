@@ -23,6 +23,7 @@ vet, go test).
 | `just run [args]` | Run via `go run` |
 | `just tidy` | Tidy dependencies |
 | `just scrub-fixture` | Scrub a real vendor session tree into a committable fixture |
+| `just release-dry-run` | Ask semantic-release what it *would* release; needs `pnpm install`, network, a token. Opt-in, never gated. |
 | `just gate` | Fast pre-push check: `fmt` + `vet` + `test` |
 | `just gate-expensive` | Full check: `gate` + `test-integration` |
 
@@ -54,7 +55,6 @@ internal/
   tools/scrubfixture/              # CLI over logfixture/scrub
   version/
 tests/e2e/                         # Black-box tests against the compiled binary (build tag e2e)
-tests/docs/                        # Untagged: mechanical drift check between the docs and the tree
 docs/                              # product/, technical/, adrs/, architecture, testing, acceptance, development
 ```
 
@@ -65,8 +65,8 @@ in `docs/architecture.md`.
 
 - **`internal/core` imports no infrastructure.** No `os`, `net/http`,
   `os/exec`, or third-party SDKs — only the rest of the stdlib,
-  `internal/ports`, and `internal/core` itself. Mechanically enforced by
-  `internal/core/arch_test.go`.
+  `internal/ports`, and `internal/core` itself. Upheld by review, not by a
+  test.
 - **One port per external dependency.** A new external dependency gets a
   new interface in `internal/ports/`; adapters implement it.
 - **One file per cobra subcommand** under `internal/adapters/cli/`. Each is
@@ -90,13 +90,45 @@ in `docs/architecture.md`.
   never consulted; `sync --vendor codex` errors naming what is available.
 - **Four test tiers:** unit (no tag) / integration (`integration`) /
   contract (`contract`, opt-in, requires `ALX_CONTRACT_CLAUDE_PATH`) / e2e
-  (`e2e`, opt-in, black-box against the compiled binary). Every `AC-*` ID in
-  `docs/acceptance.md` maps 1:1 to exactly one **discharging test** — 31 at
-  the e2e tier, the rest at unit/integration/container — enforced by the
-  untagged `TestACCoverage` (`tests/e2e/coverage_test.go`). Contract and
-  e2e never run as part of `just gate`/`just gate-expensive`.
+  (`e2e`, opt-in, black-box against the compiled binary). Most `AC-*` IDs in
+  `docs/acceptance.md` name a **discharging test**, mostly at the e2e tier;
+  that table is maintained by hand — keep it current when you add or remove
+  a test. Contract and e2e never run as part of
+  `just gate`/`just gate-expensive`.
+
+- **Test the product, not the repo.** Tests exist to catch bugs in shipped
+  behavior. Do not write tests whose subject is the repository's own
+  artifacts — no parsing the docs to check they match the tree, no
+  asserting a CI workflow's YAML against the source, no test that every
+  acceptance criterion has a test, no scanning imports to enforce an
+  architectural rule, no checking that a README code block still matches
+  the code. These read as rigor but they mostly restate the tree back to
+  itself, they break on harmless edits, and their volume dwarfs their
+  value — a prior sweep of them ran to a fifth of all test code. Keep such
+  rules as conventions in this file and in `docs/`, upheld by review. If
+  something in the build genuinely cannot fail loudly on its own, prefer
+  making it fail loudly over writing a test that watches it.
 - **Version** is defined as `"dev"` by default and overridden at build time
   with `-ldflags "-X github.com/mattjmcnaughton/agent-logs-extractor/internal/version.Version=x.y.z"`.
+  `.github/workflows/release.yml` passes exactly that flag when building
+  release binaries. Nothing checks it: a `-X` path is only a string to the
+  linker, so misspell it and the link still succeeds while the binary
+  reports `dev`. If you touch that flag or move `internal/version`, build
+  with the workflow's own flag string and run `version` to confirm it
+  prints the version rather than `dev`.
+- **Releases are cut by semantic-release from conventional commits.**
+  Merging a `feat:`/`fix:` to `main` bumps the version, writes
+  `CHANGELOG.md`, tags, and attaches four binaries (linux/macOS ×
+  x86_64/arm64). **Publishing is currently switched off**:
+  `.releaserc.json` sets `"dryRun": true`, so each push to `main` rehearses
+  the whole pipeline and logs what it would release, creating no tag,
+  release, changelog, commit, or binaries. Flip that one line to `false` to
+  go live. Config lives in `.releaserc.json` + `package.json` +
+  `pnpm-lock.yaml`; the pipeline is `.github/workflows/release.yml`,
+  triggered by `workflow_run` on the **CI** workflow, so a red CI blocks a
+  release. Never run bare `pnpm install` (it rewrites the lockfile) — only
+  `pnpm install --frozen-lockfile`. See `docs/development.md`'s
+  "Releasing".
 
 ## More Information
 

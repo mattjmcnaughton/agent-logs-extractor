@@ -1,10 +1,16 @@
-# Check formatting (exits 1 if any files need formatting)
+# Check formatting (exits 1 if any files need formatting).
+#
+# Scoped to the three directories that hold Go source rather than `.`: a
+# bare `gofmt -l .` also walks node_modules/ (the release pipeline's
+# semantic-release install — thousands of files, none of them ours). The
+# scoping is lossless: no .go file in this repo lives outside cmd/,
+# internal/, and tests/.
 fmt:
-    @if [ -n "$(gofmt -l .)" ]; then gofmt -l .; exit 1; fi
+    @if [ -n "$(gofmt -l ./cmd ./internal ./tests)" ]; then gofmt -l ./cmd ./internal ./tests; exit 1; fi
 
-# Fix formatting
+# Fix formatting (same three directories as `fmt`, same reason)
 fmt-fix:
-    gofmt -w .
+    gofmt -w ./cmd ./internal ./tests
 
 # Run go vet
 vet:
@@ -87,6 +93,32 @@ test-e2e:
 test-e2e-container:
     docker build -f Dockerfile.duckdb -t agent-logs-extractor-duckdb-test .
     docker run --rm --network none agent-logs-extractor-duckdb-test just test-e2e
+
+# Ask semantic-release what it WOULD do, without doing any of it. Proves
+# that .releaserc.json parses, that every plugin in it resolves and loads
+# from the installed node_modules, and what next version the conventional
+# commits on this branch compute to.
+#
+# It does NOT execute @semantic-release/exec: --dry-run skips the publish
+# step, which is the only lifecycle step exec is wired into. So the whole
+# output handoff is unproven here and nothing else checks it either:
+# publishCmd's two $GITHUB_OUTPUT names, release.yml's `outputs:` block,
+# build-binaries' `if:`, and the -ldflags version expression all have to
+# agree on `new-release-version` / `new-release-published`, and a rename on
+# any one side ships a release with zero binaries without failing anything.
+# Check those four by hand when you touch any of them.
+#
+# --branches is load-bearing: semantic-release refuses to compute anything
+# from a branch that is not in its configured `branches` list (["main"]),
+# so running this from a feature branch without overriding it just prints
+# "this test run was triggered on the branch <x>, while semantic-release is
+# configured to only publish from main" and exits.
+#
+# Deliberately NOT part of `gate`/`gate-expensive`: it needs `pnpm install`
+# to have run, network access, and a $GITHUB_TOKEN — none of which the gate
+# promises. Run it by name when touching the release config.
+release-dry-run:
+    pnpm exec semantic-release --dry-run --no-ci --branches "$(git branch --show-current)"
 
 # `gate`/`gate-expensive` deliberately do NOT run test-contract or test-e2e
 # (do not "helpfully" add them here): test-contract needs a developer's

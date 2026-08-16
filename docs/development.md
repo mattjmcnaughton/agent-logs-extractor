@@ -9,6 +9,17 @@
   tests; everything else runs without it (those tests skip, not fail).
 - [Docker](https://www.docker.com/) (optional) — only needed for the
   `*-container` recipes (`test-integration-container`, `test-e2e-container`).
+- [Node.js](https://nodejs.org/) 24.x + pnpm via `corepack enable`
+  (optional) — **release tooling only**. Nothing in the Go build, the test
+  pyramid, or `just gate`/`gate-expensive` touches Node; you need it only
+  to run `just release-dry-run` against the semantic-release config. The
+  pinned pnpm version comes from `package.json`'s `packageManager` field,
+  which `corepack` reads automatically.
+
+> Install release dependencies with `pnpm install --frozen-lockfile`, never
+> bare `pnpm install`. The bare form re-resolves transitive dependencies
+> and rewrites `pnpm-lock.yaml`; the committed lockfile is the exact byte
+> sequence CI installs from, and `--frozen-lockfile` is what CI runs.
 
 ## Setup
 
@@ -91,6 +102,147 @@ go build -ldflags "-X github.com/mattjmcnaughton/agent-logs-extractor/internal/v
   -o bin/agent-logs-extractor ./cmd/agent-logs-extractor
 ```
 
+This is the same flag `.github/workflows/release.yml` passes when it builds
+release binaries — see "Releasing" below. Keep the two in step by hand: a
+`-X` path is only a string to the linker, so a stale one links fine and
+ships binaries reporting `dev`.
+
+## Releasing
+
+Releases are cut automatically by
+[semantic-release](https://semantic-release.gitbook.io/) from conventional
+commit messages. **You never bump a version by hand**, never create a tag
+by hand, and never edit `CHANGELOG.md` by hand.
+
+### Commit type → version bump
+
+The bump is computed from the commits merged to `main` since the last tag:
+
+| Commit | Bump | Example |
+|---|---|---|
+| `fix: ...` | patch | `1.2.3` → `1.2.4` |
+| `feat: ...` | minor | `1.2.3` → `1.3.0` |
+| any type with `BREAKING CHANGE:` in the body (or `feat!:`) | major | `1.2.3` → `2.0.0` |
+| `docs:`, `test:`, `ci:`, `chore:`, `refactor:`, `style:`, `perf:` | none | no release |
+
+A branch whose commits are all non-releasing types merges to `main` and
+cuts nothing — which is the intended outcome for a docs-only or
+test-only change, not a failure.
+
+### The publish switch: `dryRun`
+
+**The pipeline currently rehearses instead of publishing.**
+`.releaserc.json` sets `"dryRun": true`, so on every push to `main`
+semantic-release runs in full — verifying plugin conditions, analysing
+commits, computing the next version, and rendering the release notes into
+the job log — and then stops. It creates no tag, no GitHub Release, no
+`CHANGELOG.md`, no commit on `main`, and no issue comments. Because the
+`publishCmd` never runs, `new-release-published` is never written, so
+`build-binaries` is skipped and no binaries are uploaded.
+
+That makes a merge to `main` a live-fire rehearsal: everything up to the
+point of publishing is exercised for real, and the job log states exactly
+what *would* have been released.
+
+**To go live**, change that one line to `"dryRun": false` (or delete it —
+semantic-release defaults to publishing). The commit that does so is itself
+a push to `main`, so the release fires on that merge; its own commit type
+is irrelevant, because the analyser reads every commit since the last tag,
+not just the newest one.
+
+Write it as a bare JSON boolean, not a quoted string: semantic-release
+reads the config as JavaScript, where every non-empty string is truthy, so
+`"false"` would read like "off" while keeping dry-run on.
+
+### The two-workflow flow
+
+There is no release job inside `ci.yml`. Instead:
+
+1. A push to `main` runs **CI** (`.github/workflows/ci.yml`) — three jobs:
+   `Gate`, `Gate (expensive, native duckdb)`, `Gate (expensive,
+   containerized duckdb)`.
+2. When CI **completes**, **Release**
+   (`.github/workflows/release.yml`) fires via a `workflow_run` trigger and
+   guards on `github.event.workflow_run.conclusion == 'success'`. **Any
+   failing CI job blocks the release**, and the guard additionally requires
+   the run to have been a `push` to `main` from this repository, so a fork
+   cannot drive it.
+3. Its `release` job installs the pinned Node toolchain, runs
+   `pnpm exec semantic-release`, and — via `@semantic-release/exec` —
+   writes `new-release-version` / `new-release-published` to
+   `$GITHUB_OUTPUT`.
+4. Its `build-binaries` job runs only `if: needs.release.outputs.new-release-published == 'true'`,
+   checks out the tag semantic-release just created, cross-compiles four
+   binaries (`linux`/`darwin` × `amd64`/`arm64`) with the version injected
+   via `-ldflags`, and uploads each raw and `.tar.gz` to the GitHub
+   release.
+
+Because `Release` is `workflow_run`-triggered, it **cannot fire from a pull
+request** — GitHub does not dispatch `workflow_run` for PR events. Its
+correctness is therefore established by reading the file and by the
+dry-run rehearsals below, never by executing it on a branch.
+
+### The infinite-loop guard, twice over
+
+`@semantic-release/git` pushes a `chore(release): <version> [skip ci]`
+commit to `main` with the updated `CHANGELOG.md`. Left unguarded, that push
+would trigger CI, which would trigger Release, which would push again.
+Two independent mechanisms stop it:
+
+1. **`[skip ci]` in the commit subject** — GitHub Actions skips workflow
+   runs for commits whose message contains it.
+2. **`GITHUB_TOKEN` pushes do not trigger workflows** — a documented
+   Actions behavior, independent of the commit message.
+
+Either alone would be sufficient. Both are deliberate: relying on only the
+message marker would break the moment someone reformatted the commit
+template, and relying only on the token behavior would break if the
+workflow were ever switched to a PAT.
+
+### Checking the config without cutting a release
+
+```sh
+pnpm install --frozen-lockfile
+just release-dry-run
+```
+
+This proves that `.releaserc.json` parses, that every plugin resolves and
+loads, and what next version the commits on the current branch compute to.
+`--branches "$(git branch --show-current)"` is load-bearing: without it,
+semantic-release refuses to compute anything off a branch that is not
+`main`.
+
+It does **not** run `@semantic-release/exec`: `--dry-run` skips the publish
+step, the only lifecycle step that plugin is wired into. It also needs
+network access and a `$GITHUB_TOKEN`, which is why it is deliberately
+**not** part of `just gate`/`just gate-expensive`.
+
+Nothing in `just gate`/`just gate-expensive` reads the release config
+either — no test parses `release.yml`, `.releaserc.json`, or
+`pnpm-lock.yaml`. Review these by hand when you touch them, because each
+one breaks silently rather than loudly:
+
+- the `-ldflags` `-X` symbol path, against `go.mod`'s module path and
+  `internal/version`'s package path;
+- the build target, and the matrix's four targets and asset names;
+- the `workflow_run` binding to CI's workflow `name:` — a trigger naming a
+  nonexistent workflow is not an error to GitHub, it just never fires;
+- the Go version pin, kept equal to `ci.yml`'s;
+- the `v` tag prefix hardcoded in `ref:` / `tag_name:`;
+- `.releaserc.json`'s plugin list and order, and `pnpm-lock.yaml`'s
+  agreement with `package.json` — otherwise
+  `pnpm install --frozen-lockfile` fails on main.
+
+The `new-release-version` / `new-release-published` names are worth calling
+out on their own: four places must agree on them — `publishCmd`'s
+`$GITHUB_OUTPUT` writes, the `release` job's `outputs:` block,
+`build-binaries`' `if:`, and the `-ldflags` version expression. A rename
+anywhere along that chain makes the `if:` compare false and publishes a tag
+and a Release with zero binaries attached, green. None of it is reachable
+before a merge; what stays unproven until the first real release is the
+run-time half — that the publish step fires and that the redirect lands in
+`$GITHUB_OUTPUT`.
+
 ## Adding a New Command
 
 1. Add a use case under `internal/core/` (a new package with its own
@@ -123,13 +275,15 @@ go build -ldflags "-X github.com/mattjmcnaughton/agent-logs-extractor/internal/v
 
 1. Add the worked scenario to `docs/acceptance.md` (a `**AC-ID —
    ...**` heading with its Given/When/Then) and a matching row in §2's
-   criteria index table, in the same change — `TestACCoverage`
-   (`tests/e2e/coverage_test.go`) fails if only one exists.
-2. For a `tier: e2e` row, add a `TestAC_<CATEGORY>_<NN>_<ShortName>`
-   function under `tests/e2e/` — `TestACCoverage` fails until both the
-   `docs/acceptance.md` row *and* the `TestAC_*` function exist, and the
-   Test column must name the function it actually finds.
+   criteria index table, in the same change — the two are kept in step by
+   hand, so an orphan on either side goes unnoticed.
+2. For a `tier: e2e` row, write the matching
+   `TestAC_<CATEGORY>_<NN>_<ShortName>` function under `tests/e2e/`
+   yourself, and name it in the Test column exactly as declared.
 3. For `tier: unit`/`tier: integration`, point the Test column at an
    existing (or new) `TestXxx` function anywhere in the repo; for `tier:
    container`, point it at a `just <recipe>` that exists in the justfile.
-4. Run `just test` — `TestACCoverage` is untagged and runs as part of it.
+   For a criterion no automated test covers, write `—` in the Test column
+   and `manual` as the tier rather than leaving it looking discharged.
+4. Run the tier the new test belongs to (`just test`, `just
+   test-integration`, or `just test-e2e`) and confirm it passes.

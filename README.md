@@ -10,6 +10,23 @@ See `docs/product/prd-mvp.md` for scope and `docs/technical/tdd-mvp.md` for the 
 
 ## Install
 
+The release pipeline is built but is deliberately still rehearsing
+(`"dryRun": true` in `.releaserc.json`), so no release has been published
+yet — build from source for now. Once it is switched on, each [GitHub
+release](https://github.com/mattjmcnaughton/agent-logs-extractor/releases)
+will carry prebuilt binaries, each one both raw and as a `.tar.gz`:
+
+| Asset | Platform |
+|---|---|
+| `agent-logs-extractor-linux-x86_64` | Linux, x86_64 |
+| `agent-logs-extractor-linux-arm64` | Linux, arm64 |
+| `agent-logs-extractor-macos-x86_64` | macOS, Intel |
+| `agent-logs-extractor-macos-arm64` | macOS, Apple silicon |
+
+Download the one for your platform, `chmod +x` it, and put it on your
+`PATH`. `agent-logs-extractor version` reports the released version.
+
+Or with the Go toolchain:
 ```
 go install github.com/mattjmcnaughton/agent-logs-extractor/cmd/agent-logs-extractor@latest
 ```
@@ -18,6 +35,9 @@ Or, from a checkout:
 ```
 just build   # builds to bin/agent-logs-extractor
 ```
+
+(Both source builds report version `dev`; only the release binaries carry a
+real version.)
 
 Querying the export requires the [DuckDB CLI](https://duckdb.org/docs/installation/); `sync` itself does not.
 

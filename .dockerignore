@@ -1,2 +1,18 @@
 bin/
 .git/
+
+# Release tooling's installed dependencies: large, host-specific, and never
+# needed inside the duckdb test image.
+node_modules/
+
+# DO NOT add .github/, package.json, pnpm-lock.yaml, or .releaserc.json to
+# this file.
+#
+# Dockerfile.duckdb does a plain `COPY . .` and its CMD runs
+# `just test-integration`, which compiles the tests/release/ package —
+# including that package's UNTAGGED file, which reads all four of those
+# paths as data (release.yml, ci.yml, .releaserc.json, package.json,
+# pnpm-lock.yaml). Excluding any of them here does not skip a test; it
+# makes tests/release/ t.Fatal on a missing file and turns CI's
+# "Gate (expensive, containerized duckdb)" job red for a reason that looks
+# entirely unrelated to the change that caused it.

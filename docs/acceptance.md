@@ -3,8 +3,9 @@
 This document defines the observable behavior `agent-logs-extractor` must
 exhibit to be considered correct. Each criterion is a Given / When / Then
 scenario naming a concrete invocation and checkable assertions, referenced
-by ID (`AC-<CATEGORY>-<NN>`). Every criterion maps 1:1 to exactly one
-discharging test — §2 is the index; §3 onward are the worked scenarios.
+by ID (`AC-<CATEGORY>-<NN>`). Most criteria name one discharging test; a
+few are checked by hand (tier **manual**, §1.5) — §2 is the index; §3
+onward are the worked scenarios.
 
 A scenario **passes** only if every assertion in its **Then** holds.
 
@@ -59,7 +60,7 @@ tier and the integration tier will disagree.
 
 Every e2e scenario runs against a fresh `sandbox` (`tests/e2e/setup_test.go`):
 an isolated home directory that backs **both** `HOME` and, by default,
-`AGENT_LOGS_EXTRACTOR_HOME` (decision D10, §12) — never the real host
+`AGENT_LOGS_EXTRACTOR_HOME` (decision D10, §13) — never the real host
 `HOME`. `AC-SANDBOX-03`
 is the one scenario that deliberately unsets `AGENT_LOGS_EXTRACTOR_HOME`
 from the child environment; `HOME` still points at the sandbox even then,
@@ -77,10 +78,14 @@ Four tiers, `docs/technical/tdd-mvp.md`'s "Testing" section:
 - **e2e** (`//go:build e2e`) — `just test-e2e`; opt-in, never part of `just gate`/`just gate-expensive` (R4).
 - **container** — `just test-e2e-container`, the e2e suite run inside `Dockerfile.duckdb` with `--network none`; opt-in, proves AC-SCOPE-03 (no outbound network) and every duckdb-dependent (†) criterion with `ALX_REQUIRE_DUCKDB=1` already set as an image `ENV`.
 
-`TestACCoverage` (`tests/e2e/coverage_test.go`, deliberately **untagged** so
-it runs inside `just gate`) enforces that every criterion below maps to
-exactly one discharging test, and that every `TestAC_*` test in
-`tests/e2e/` maps back to a criterion here.
+A fifth Tier value, **manual**, appears in §2's index for criteria no
+automated test currently proves; their Test column reads `—`. They still
+state intended behavior, and are checked by hand.
+
+The mapping between the criteria below and their tests is **maintained by
+hand** — nothing checks it for you. Keep it honest: a criterion should name
+the one test that discharges it, and every `TestAC_*` test in `tests/e2e/`
+should map back to a criterion here.
 
 ### 1.6 The `†` marker
 
@@ -122,10 +127,10 @@ gate-expensive jobs, and the `test-e2e-container` image, all set it).
 | AC-EXPORT-04 | US-5 | no duckdb on PATH exits 1 with an install hint | `TestAC_EXPORT_04_MissingBinaryHint` | e2e |
 | AC-EXPORT-05 | US-5 | `export` before any `sync` exits 1 naming `sync` as the fix | `TestAC_EXPORT_05_NoStoreYet` | e2e |
 | AC-EXPORT-06 † | US-7 | an empty store exports cleanly: 3 tables, 0 rows | `TestAC_EXPORT_06_EmptyStoreExports` | e2e |
-| AC-QUERY-01 | US-3 | README cookbook query 1 binds and returns the right rows | `TestCookbookQueries` (Q1 subtests, `internal/adapters/duckdbcli`) | integration |
-| AC-QUERY-02 | US-4 | README cookbook query 2 ditto | `TestCookbookQueries` (Q2 subtests, `internal/adapters/duckdbcli`) | integration |
-| AC-QUERY-03 | US-3, US-4 | README cookbook query 3 returns one row per project | `TestCookbookQueries` (Q3 subtest, `internal/adapters/duckdbcli`) | integration |
-| AC-QUERY-04 | US-3, US-4 | the SQL under test is byte-identical to README's | `TestCookbookQueriesMatchTheREADME` (`internal/adapters/duckdbcli`) | unit |
+| AC-QUERY-01 | US-3 | README cookbook query 1 binds and returns the right rows | — | manual |
+| AC-QUERY-02 | US-4 | README cookbook query 2 ditto | — | manual |
+| AC-QUERY-03 | US-3, US-4 | README cookbook query 3 returns one row per project | — | manual |
+| AC-QUERY-04 | US-3, US-4 | any SQL exercised against the export is byte-identical to README's | — | manual |
 | AC-QUERY-05 † | US-5 | the binary's own export carries the denormalized columns | `TestAC_QUERY_05_DenormalizedColumns` | e2e |
 | AC-SANDBOX-01 † | US-1 | `AGENT_LOGS_EXTRACTOR_HOME` redirects both store and export, nothing written outside it | `TestAC_SANDBOX_01_HomeRedirectsStoreAndExport` | e2e |
 | AC-SANDBOX-02 | US-1 | `AGENT_LOGS_EXTRACTOR_HOME` wins outright over `XDG_DATA_HOME` | `TestAC_SANDBOX_02_HomeBeatsXDG` | e2e |
@@ -133,6 +138,7 @@ gate-expensive jobs, and the `test-e2e-container` image, all set it).
 | AC-SCOPE-01 | — | vendor sources are read-only: hash before/after a sync is unchanged | `TestAC_SCOPE_01_SourcesAreReadOnly` | e2e |
 | AC-SCOPE-02 | — | no config file is ever read or written | `TestAC_SCOPE_02_NoConfigFile` | e2e |
 | AC-SCOPE-03 | — | nothing reaches the network at run time | `just test-e2e-container` | container |
+| AC-RELEASE-01 | — | a binary built with release.yml's own ldflags reports the injected version, not `dev` | — | manual |
 
 ---
 
@@ -332,22 +338,30 @@ sensitive benchmark to assert honestly.
 
 ## 8. Cookbook queries (US-3, US-4)
 
+The four criteria below are **manual**: no automated test proves them. They
+are checked by running the queries by hand against a real export.
+
 **AC-QUERY-01 — cookbook query 1 binds and returns the right rows**
-- Discharged by `TestCookbookQueries`'s Q1 subtests in
-  `internal/adapters/duckdbcli` (integration tier, real `duckdb`). See
-  decision R5: not re-tested at the e2e tier.
+- Given: a store synced from the committed fixture tree and exported with
+  `export duckdb`, and a real `duckdb` binary.
+- When: `README.md`'s first cookbook query runs against the exported file.
+- Then: it binds (no SQL error) and returns the rows the fixture data
+  implies. Note its `INTERVAL 1 DAY` predicate: the committed fixtures are
+  older than that, so a bare run against them returns 0 rows — a 0-row
+  result proves the query binds, not that the predicate is exercised.
 
 **AC-QUERY-02 — cookbook query 2 binds and returns the right rows**
-- Discharged by `TestCookbookQueries`'s Q2 subtests, same package.
+- As AC-QUERY-01, with `README.md`'s second cookbook query.
 
 **AC-QUERY-03 — cookbook query 3 returns one row per project**
-- Discharged by `TestCookbookQueries`'s Q3 subtest, same package.
+- As AC-QUERY-01, with `README.md`'s third cookbook query; it returns
+  exactly one row per project present in the export.
 
-**AC-QUERY-04 — the tested SQL matches README's**
-- Discharged by `TestCookbookQueriesMatchTheREADME` (unit tier, no duckdb
-  needed): parses the ` ```sql ` fences out of `README.md` and fails the
-  moment either copy drifts from the Go constants the acceptance test
-  actually runs.
+**AC-QUERY-04 — the SQL exercised matches README's**
+- The cookbook is user-facing documentation, so anything exercising it —
+  by hand or otherwise — uses `README.md`'s ` ```sql ` fences verbatim
+  rather than a paraphrase. A query that has been "helpfully" adjusted to
+  match the fixture data proves nothing about what a reader will run.
 
 **AC-QUERY-05 † — the binary's own export carries the denormalized columns**
 - Given: a sandbox synced against the full fixture tree, then exported.
@@ -415,7 +429,40 @@ sensitive benchmark to assert honestly.
 
 ---
 
-## 11. User-story coverage
+## 11. Release pipeline
+
+**AC-RELEASE-01 — the release build's `-ldflags` actually injects the version**
+- Given: the `-ldflags` string read verbatim out of
+  `.github/workflows/release.yml`'s build step, with its
+  `${{ needs.release.outputs.new-release-version }}` expression replaced by
+  a sentinel version. The string is **read from the workflow**, never
+  hardcoded in the test — a hardcoded copy would only prove that Go's `-X`
+  mechanism works, which was never in doubt.
+- When: `./cmd/agent-logs-extractor` is built with exactly that `-ldflags`
+  string (`CGO_ENABLED=0`, host `GOOS`/`GOARCH`) and the resulting binary
+  is run as `agent-logs-extractor version`.
+- Then: exit `0`; stdout is exactly the sentinel version — in particular
+  **not** `dev`, the value compiled into `internal/version.Version` by
+  default.
+
+Why this is its own criterion rather than a stronger `AC-CLI-01`:
+`AC-CLI-01` asserts only that `version` exits `0` with non-empty stdout,
+and the whole e2e tier builds its binary with no `-ldflags` at all, so
+`dev` satisfies every other criterion in this document. A `-X` argument is
+just a string to the Go linker — it does not have to name a symbol that
+exists, and when it does not, the link succeeds silently and every shipped
+binary reports `dev`. This criterion exists to name that failure mode, so
+that nobody mistakes a green `AC-CLI-01` for proof the version was
+injected.
+
+This criterion is **manual**: no automated test proves it. Check it by hand
+when the build step, the `-ldflags` string, or `internal/version`'s package
+path changes — build with the workflow's own flag string and confirm
+`version` prints the sentinel rather than `dev`.
+
+---
+
+## 12. User-story coverage
 
 | Story | Criteria |
 |---|---|
@@ -429,7 +476,7 @@ sensitive benchmark to assert honestly.
 
 ---
 
-## 12. Resolved decisions
+## 13. Resolved decisions
 
 **R1 — Exit codes stay 0/1, not fetch-context's 0/1/2.** This ticket is
 tests-and-docs; adopting a three-way exit-code convention (success / runtime
@@ -455,21 +502,17 @@ documented in `docs/development.md`, and is deliberately absent from
 e2e tiers are opt-in (`just test-contract`, `just test-e2e`,
 `just test-e2e-container`) and never run as part of `just gate` or
 `just gate-expensive` — CI (`.github/workflows/ci.yml`) is unchanged by this
-ticket. The one addition to the untagged suite `just gate`/`just test`
-already runs is `TestACCoverage` (§1.5), which is pure doc/AST parsing with
-no subprocess, no binary, and no duckdb, so it costs nothing to gate on.
+ticket.
 
-**R5 — US-3/US-4 are not re-tested at the e2e tier.** The cookbook queries
-are already proven end-to-end against a real `duckdb` binary by
-`TestCookbookQueries` (integration tier) and pinned byte-identical to
-README's fences by `TestCookbookQueriesMatchTheREADME` (unit tier) —
-re-running the same three queries through the compiled binary would add
-process-spawn cost without covering anything those tests don't already
-cover. The two binary-level gaps that genuinely are new — does the real
-`export duckdb` invocation actually produce the row counts `sync` promised
-(AC-EXPORT-03), and does it actually carry the denormalized columns the
-cookbook queries depend on (AC-QUERY-05) — get their own thin e2e criteria
-instead.
+**R5 — US-3/US-4 are not tested at the e2e tier.** The cookbook queries are
+`README.md`'s text, not the binary's behavior; re-running the same three
+queries through the compiled binary would add process-spawn cost to prove
+something about duckdb rather than about this tool (AC-QUERY-01–04 are
+**manual**, §8). The two binary-level gaps that genuinely are new — does
+the real `export duckdb` invocation actually produce the row counts `sync`
+promised (AC-EXPORT-03), and does it actually carry the denormalized
+columns the cookbook queries depend on (AC-QUERY-05) — get their own thin
+e2e criteria instead.
 
 **R6 — Container e2e reuses `Dockerfile.duckdb`.** `just test-e2e-container`
 builds and runs the same image `just test-integration-container` already
@@ -479,13 +522,12 @@ image warms its Go module cache at build time; no bind mounts are needed at
 run time). `ALX_REQUIRE_DUCKDB=1` is already an image `ENV`, so every `†`
 criterion hard-fails inside the container rather than silently skipping.
 
-The three decisions below (T3) were cited by their short D-series names in
-code comments (`tests/e2e/main_test.go`, `coverage_test.go`,
-`setup_test.go`) from the start, but were never actually written down
-anywhere — the citations pointed at "the ticket plan this document was
-written from," a document that was never part of this repo. They are
-promoted here, under their existing names, so every `D1`/`D5`/`D10`
-reference in the tree now resolves.
+The two decisions below (T3) were cited by their short D-series names in
+code comments (`tests/e2e/main_test.go`, `setup_test.go`) from the start,
+but were never actually written down anywhere — the citations pointed at
+"the ticket plan this document was written from," a document that was never
+part of this repo. They are promoted here, under their existing names, so
+every `D1`/`D10` reference in the tree now resolves.
 
 **D1 — an unset `$ALXBIN` builds a binary, it does not fail.**
 `tests/e2e/main_test.go`'s `TestMain` resolves `$ALXBIN` once for the whole
@@ -496,14 +538,6 @@ invocation resolves the same binary. The `just test-e2e` /
 run shares one binary instead of paying a rebuild per test file; a
 developer running `go test -tags=e2e ./tests/e2e/...` directly still gets a
 working suite with no setup step of their own.
-
-**D5 — `TestACCoverage` carries no build tag.** It never spawns the binary,
-never touches duckdb, never needs a fixture — it only parses this document
-and the Go source under `tests/e2e/` and the rest of the repo — so it runs
-as part of the untagged `go test ./...` / `just gate` (§1.5) and proves the
-AC-ID ↔ test mapping stays honest on every push, not just when someone
-remembers to run the opt-in e2e tier. It is deliberately the one file in
-`tests/e2e/` without `//go:build e2e`.
 
 **D10 — every e2e run sets both `HOME` and `AGENT_LOGS_EXTRACTOR_HOME`.**
 `sandbox`'s child environment is built from scratch (§1.4): `HOME` always

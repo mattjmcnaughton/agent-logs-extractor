@@ -44,10 +44,6 @@ on purpose — `justfile`'s comment above `gate` explains why, verbatim:
 > and `gate-expensive`'s existing "needs only Go + a pinned duckdb CLI"
 > promises were never meant to carry. Both stay opt-in, run by name.
 
-The one addition to the gated, untagged suite is `TestACCoverage` (§10
-below) — pure doc/AST parsing, no subprocess, no binary, no duckdb, so it
-costs nothing to gate on even though the e2e tier itself does not run.
-
 ## Unit tests
 
 **Location.** Same package as the code under test, no build tag. Run via
@@ -71,17 +67,12 @@ on.
 observable outcomes: what ended up in the fake store, what a fake exporter
 was asked to produce, which vendor a summary credited a session to.
 
-**Untagged outliers** — six files carry no build tag despite touching more
-than "pure function or fake," each for a specific reason:
+**Untagged outlier** — one file carries no build tag despite sitting
+outside the two flavors above:
 
 | File | Why untagged |
 |---|---|
-| `internal/core/arch_test.go` | Must run on every push to enforce core purity (decision 1); it only parses Go syntax, no I/O |
-| `tests/e2e/coverage_test.go` (`TestACCoverage`) | D5 — parses `docs/acceptance.md` and Go source, no subprocess, no binary, no duckdb, so it can gate the AC-ID mapping without paying the e2e tier's cost |
-| `internal/adapters/duckdbcli/cookbook_test.go` | D11's README anti-drift guard (`TestCookbookQueriesMatchTheREADME`) needs no `duckdb` binary — it only parses `README.md`'s fenced SQL and compares it against the Go constants the integration-tier `TestCookbookQueries` actually runs |
-| `internal/adapters/duckdbcli/cookbook_query_test.go` | Not a test file at all in the functional sense — it holds the `CookbookQuery1`/`2`/`3` string constants `cookbook_test.go` and the integration-tier `TestCookbookQueries` both reference; untagged so both can import it |
 | `internal/ports/canonicalstore_test.go` | `ValidSessionDoc` is a pure predicate; testing it needs nothing an adapter or a build tag would add |
-| `tests/docs/docs_test.go` | This ticket (#12) — a mechanical drift check between the docs and the tree; pure file/AST parsing, no I/O beyond reading local files |
 
 ## Fakes over mocks (D2)
 
@@ -116,7 +107,6 @@ test-integration` (and as part of `just gate-expensive`).
 | `adapters/cli` | Full `sync` against a real temp filesystem | `sync_integration_test.go` |
 | `adapters/jsonlstore` | Real `os.TempDir()` store root | `jsonlstore_integration_test.go` |
 | `adapters/duckdbcli` | A real `duckdb` binary on `PATH` | `duckdbcli_integration_test.go` |
-| `adapters/duckdbcli` (cookbook) | Real `duckdb`, real export of the committed fixtures | `cookbook_integration_test.go` |
 | `core/sync` | Real fixture trees on a real temp filesystem | `sync_integration_test.go` |
 
 **The duckdb skip-vs-fail rule.** `internal/adapters/duckdbcli`'s
@@ -170,7 +160,7 @@ is deliberate and mechanical: CI never sets `ALX_CONTRACT_CLAUDE_PATH`, and
 a contributor's own sandbox transcript (or any other live history) must
 never be read by accident just because the env var was forgotten. The
 variable is **test-only** — never read by the CLI or by wiring, never a
-flag, never documented in `README.md` (`docs/acceptance.md` §12 R3).
+flag, never documented in `README.md` (`docs/acceptance.md` §13 R3).
 
 **The two invocation recipes** (see `docs/development.md` for the exact
 command lines): point `ALX_CONTRACT_CLAUDE_PATH` at an empty directory to
@@ -185,7 +175,7 @@ private conversation log.
 ## E2E tier
 
 **Location.** `tests/e2e/` (top-level, not under `internal/`). Build tag
-`//go:build e2e`, except `coverage_test.go` (§10). Run via `just test-e2e`.
+`//go:build e2e`. Run via `just test-e2e`.
 
 **Black-box import rule.** No `internal/core` or `internal/adapters` import
 is permitted anywhere in `tests/e2e/` — the only `internal/` import allowed
@@ -279,38 +269,39 @@ the full rule and the alphanumeric `mktemp` template it recommends.
 
 ## The AC-ID rule
 
-Every `AC-*` ID in `docs/acceptance.md` maps 1:1 to exactly one
-discharging test. `tests/e2e/coverage_test.go`'s `TestACCoverage`
-(untagged — see §4's outlier table) enforces it with five checks:
+Every `AC-*` ID in `docs/acceptance.md` names the one test that discharges
+it, or `—` when no automated test does. The mapping is **maintained by
+hand** — nothing checks it for you, so keep it honest as you add and remove
+tests:
 
-- (a) the set of `**AC-...**` headings in the document equals the set of
-  rows in §2's criteria index table — no orphaned heading, no indexed row
+- the set of `**AC-...**` headings in the document equals the set of rows
+  in §2's criteria index table — no orphaned heading, no indexed row
   missing its worked scenario.
-- (b) every `tier: e2e` row has exactly one `TestAC_<CAT>_<NN>_*` function
-  under `tests/e2e/`.
-- (c) every such `TestAC_*` function found maps back to a `tier: e2e` row —
+- a `tier: e2e` row names exactly one `TestAC_<CAT>_<NN>_*` function under
+  `tests/e2e/`, and every such function maps back to a `tier: e2e` row —
   no orphaned test.
-- (d) every `tier: unit` or `tier: integration` row's Test column names a
-  `TestXxx` function that exists **somewhere in the repo** (not just
-  `tests/e2e/`).
-- (e) every `tier: container` row's Test column names a `just <recipe>`
-  that is actually defined in the justfile.
+- a `tier: unit` or `tier: integration` row's Test column names a `TestXxx`
+  function that exists **somewhere in the repo** (not just `tests/e2e/`).
+- a `tier: container` row's Test column names a `just <recipe>` that is
+  actually defined in the justfile.
+- a `tier: manual` row carries `—` in its Test column: the criterion still
+  describes intended behavior, but no automated test currently proves it.
 
-Four tier values appear in the table: `e2e`, `unit`, `integration`,
-`container` — checked against, respectively, the discovered
-`tests/e2e/*_test.go` functions, every `TestXxx` function anywhere in the
-tree, the same set, and the justfile's own recipe names.
+Five tier values appear in the table: `e2e`, `unit`, `integration`,
+`container`, `manual`.
 
 **Adding or removing an AC.** Add the `**AC-ID — ...**` worked scenario and
-its §2 index row together (check (a) fails if only one exists); for a
-`tier: e2e` row, add the matching `TestAC_*` function in `tests/e2e/`
-before `TestACCoverage` will pass. Removing an AC means removing both the
-heading/row and its discharging test in the same change.
+its §2 index row together; for a `tier: e2e` row, add the matching
+`TestAC_*` function in `tests/e2e/` yourself. Removing an AC means removing
+both the heading/row and its discharging test in the same change.
 
 ## CI
 
-`.github/workflows/ci.yml` runs three jobs on every push and pull request
-to `main`:
+Two workflows, in sequence.
+
+### `.github/workflows/ci.yml` (**CI**)
+
+Runs three jobs on every push and pull request to `main`:
 
 - **`Gate`** — `just gate` on a plain Ubuntu runner (no duckdb install).
   Kept alongside the more expensive jobs deliberately, even though it's a
@@ -326,11 +317,45 @@ to `main`:
   none`. Reuses `Dockerfile.duckdb`, not a second image, and can be
   reverted independently of the native job if it proves flaky.
 
+**No CI job runs the e2e or contract tier.** Both are opt-in, run by name
+(see the E2E and Contract tier sections above).
+
+### `.github/workflows/release.yml` (**Release**)
+
+Not triggered by a push at all. It fires via `workflow_run` on the **CI**
+workflow completing, and guards on
+`github.event.workflow_run.conclusion == 'success'` plus a `push` to `main`
+from this repository — so **any failing CI job blocks the release**, and a
+fork cannot drive it. It runs semantic-release, then cross-compiles and
+uploads four binaries against the tag semantic-release just cut. See
+`docs/development.md`'s "Releasing" for the full flow.
+
+One consequence for testing:
+
+- **This workflow has never executed.** A `workflow_run` trigger by design
+  does not fire from a pull request, so the file's first real run is always
+  the first push to `main` after it merges — the same caveat
+  `Dockerfile.duckdb`'s containerized job carried when it landed. Its first
+  runs are rehearsals rather than releases: `.releaserc.json` sets
+  `"dryRun": true`, so everything up to publishing is exercised for real
+  while nothing is created.
+
+Nothing in the test suite reads `release.yml`, `.releaserc.json`, or
+`pnpm-lock.yaml`; the pipeline is verified by review and by those dry-run
+rehearsals. Two edits are worth extra care in review because they fail
+silently rather than loudly: the `-ldflags` `-X` symbol path (a wrong path
+links successfully and ships binaries reporting `dev`) and the `release` →
+`build-binaries` output handoff on
+`new-release-version`/`new-release-published` (a rename anywhere along that
+chain publishes a tag and a GitHub Release with zero binaries attached,
+green). `just release-dry-run` asks semantic-release what it *would*
+release.
+
 ## See also
 
 - `docs/architecture.md` — the hexagonal layout that makes this test
   pyramid cheap to populate.
-- `docs/acceptance.md` — the AC IDs every `e2e`-tier test (and a handful of
-  `unit`/`integration`/`container`-tier tests) maps to.
+- `docs/acceptance.md` — the AC IDs every `e2e`-tier test (and the
+  `container`-tier recipe) maps to.
 - `internal/testing/logfixture/README.md` — full fixture provenance,
   regeneration commands, and the scrub engine's redaction rules.

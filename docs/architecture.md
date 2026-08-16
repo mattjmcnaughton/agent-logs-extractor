@@ -7,8 +7,7 @@ agent-logs-extractor is a Go CLI built with strict hexagonal
 `fetch-context`:
 
 - The **core** (`internal/core/`) contains pure use cases and domain
-  services — see Layering below for what "pure" means and how it's
-  enforced.
+  services — see Layering below for what "pure" means.
 - **Ports** (`internal/ports/`) are small Go interfaces the core depends on.
 - **Adapters** (`internal/adapters/`) are concrete implementations of ports,
   one adapter per external dependency.
@@ -33,7 +32,6 @@ internal/
     model/         # Unified data model (SessionDoc/Session/Message/ToolCall)
     sync/          # Sync use case
     export/        # Export use case
-    arch_test.go   # TestCorePurity: mechanically enforces the purity rule below
   ports/           # Interfaces the core depends on
     conversationsource.go  # ConversationSource
     canonicalstore.go      # CanonicalStore, StoreRebuild, ValidSessionDoc
@@ -54,15 +52,14 @@ internal/
     version.go     # Version string (injectable via ldflags)
 tests/
   e2e/             # Black-box tests against the compiled binary (build tag e2e),
-                   # one file per AC-ID category, plus the untagged coverage_test.go
-  docs/            # Untagged: mechanical drift check between the docs and the tree
+                   # one file per AC-ID category
 docs/
   product/         # Product requirements (prd-mvp.md)
   technical/       # Technical design (tdd-mvp.md) — the nine core decisions live here
   adrs/            # Architecture Decision Records (currently empty — see "See also")
   architecture.md  # this document
   testing.md       # four-tier test pyramid, fakes conventions, fixture provenance
-  acceptance.md    # observable contract; every AC-* ID maps to exactly one discharging test
+  acceptance.md    # observable contract; AC-* IDs and the tests that discharge them
   development.md   # dev setup and common tasks
 ```
 
@@ -94,18 +91,16 @@ main.go (wiring; the only file that imports every concrete adapter)
 `internal/core` never imports infrastructure (`os`, `net/http`, `os/exec`,
 `os/signal`, `net`, `syscall`, `runtime/debug`, `plugin`, `embed`, or any
 third-party SDK) — only the rest of the stdlib, `internal/ports`, and
-itself. `internal/core/arch_test.go`'s `TestCorePurity` walks every non-test
-`.go` file under `internal/core/` and asserts this; `TestForbidden` is a
-table test of the classifier itself, guarding against `TestCorePurity`
-passing vacuously if the classifier were ever broken.
+itself. This is a rule upheld in review: read the import block of every
+non-test `.go` file a change touches under `internal/core/`, and if it
+needs something from that list, the dependency belongs behind a port
+instead.
 
-**Documented gap:** `TestCorePurity` only checks *direct* imports of files
-under `internal/core/`; taint through `internal/ports` is not caught — a
-port implementation is free to import `os/exec`, and a core file that only
-imports `internal/ports` would not see that transitively
-(`arch_test.go`'s own doc comment, lines 24-30). `internal/ports` is three
-files of pure interface declarations whose imports are trivially
-reviewable by hand, so this is an accepted gap, not a hole to close.
+The rule is about *direct* imports. Taint through `internal/ports` is out
+of scope by design — a port implementation is free to import `os/exec`, and
+a core file that only imports `internal/ports` inherits nothing observable
+from it. `internal/ports` is three files of pure interface declarations
+whose imports are trivially reviewable by hand.
 
 ## Ports
 
@@ -252,6 +247,18 @@ Go itself is pinned at `1.25.0` (`go.mod`); CI additionally pins `duckdb
 or tested contract across a version range (see `docs/technical/tdd-mvp.md`
 core decision 4's elaboration under "Settled by `internal/adapters/duckdbcli`").
 
+The release pipeline pins its own toolchain, entirely separately from the
+Go build: **Node 24.x** and **pnpm 11.1.2**
+(`.github/workflows/release.yml`'s `node-version`, `package.json`'s
+`packageManager` field, which `corepack` reads), plus exact — not
+caret-ranged — versions for **semantic-release 24.2.3** and each of its six
+plugins (`package.json`'s `devDependencies`, resolved transitively by the
+committed `pnpm-lock.yaml`, which CI installs with `--frozen-lockfile`).
+None of this is a dependency of the Go module: `go.mod` stays at Cobra +
+afero. `release.yml`'s Go pin is kept equal to `ci.yml`'s by hand — bump
+the two together, so released binaries are always built by the toolchain
+the gate ran.
+
 ## The nine core decisions, and where they live
 
 `docs/technical/tdd-mvp.md`'s "Core decisions" section is the load-bearing
@@ -260,11 +267,11 @@ rather than restated here.
 
 | # | Decision | Embodied in | Proven by |
 |---|---|---|---|
-| 1 | Hexagonal architecture, strictly | `internal/core/`, `internal/ports/`, `internal/adapters/`, `main.go` | `internal/core/arch_test.go` (`TestCorePurity`) |
+| 1 | Hexagonal architecture, strictly | `internal/core/`, `internal/ports/`, `internal/adapters/`, `main.go` | Review of each core file's import block (see Layering) |
 | 2 | Fakes over mocks | `internal/testing/fakes/` | `fakes_test.go`; every `internal/core/*` unit test |
 | 3 | Canonical store is JSONL, not a database | `internal/adapters/jsonlstore/` | `jsonlstore_test.go`, `jsonlstore_integration_test.go` |
 | 4 | DuckDB invoked as a subprocess behind a port, not CGO | `internal/adapters/duckdbcli/` (`os/exec`) | `duckdbcli_test.go`, `duckdbcli_integration_test.go` |
-| 5 | No in-tool query surface; denormalized export | `README.md`'s cookbook; `script.go`'s `scriptTail` joins | `TestCookbookQueriesMatchTheREADME`, `TestCookbookQueries`, AC-QUERY-05 |
+| 5 | No in-tool query surface; denormalized export | `README.md`'s cookbook; `script.go`'s `scriptTail` joins | `script_test.go`'s golden SQL; AC-QUERY-05 |
 | 6 | `sync` is a full, atomic rebuild | `internal/core/sync/sync.go`; `jsonlstore/rebuild.go`'s staging + two-rename swap | AC-SYNC-03 (idempotent, no leftovers) |
 | 7 | Lenient, lossless parsing | `model.SkipReason`; `claudesource/classify.go`; `sync.go`'s three-way severity split | AC-SKIP-01/02/03 |
 | 8 | Fixture-driven adapters, contract-tested against live logs | `internal/testing/logfixture/`; `claudesource_contract_test.go`; `internal/testing/invariants/` | golden tests in `claudesource`; `invariants_test.go` |
