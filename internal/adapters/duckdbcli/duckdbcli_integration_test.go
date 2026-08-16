@@ -85,9 +85,9 @@ func exportStore(t *testing.T, storeRoot, out string) error {
 // TIMESTAMPTZ column is an absolute instant either way, so this affects
 // only display, never which rows a WHERE clause selects. A command
 // failure (non-zero exit — including "does not bind") fails the test
-// immediately with the query and duckdb's own output attached, which is
-// exactly the signal the "verbatim" cookbook assertions rely on (D11):
-// their job is to bind and exit 0, not merely to be well-formed SQL.
+// immediately with the query and duckdb's own output attached, so a query
+// that is well-formed SQL but does not bind against the exported schema is
+// reported as a failure rather than as an empty result set.
 func queryJSON(t *testing.T, duckdbBin, dbPath, query string) []map[string]any {
 	t.Helper()
 	cmd := exec.Command(duckdbBin, dbPath, "-json", "-c", query)

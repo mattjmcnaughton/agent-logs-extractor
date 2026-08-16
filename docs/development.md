@@ -103,8 +103,9 @@ go build -ldflags "-X github.com/mattjmcnaughton/agent-logs-extractor/internal/v
 ```
 
 This is the same flag `.github/workflows/release.yml` passes when it builds
-release binaries — see "Releasing" below, and note that
-`tests/release/` exists precisely to keep the two from drifting apart.
+release binaries — see "Releasing" below. Keep the two in step by hand: a
+`-X` path is only a string to the linker, so a stale one links fine and
+ships binaries reporting `dev`.
 
 ## Releasing
 
@@ -177,9 +178,9 @@ There is no release job inside `ci.yml`. Instead:
    release.
 
 Because `Release` is `workflow_run`-triggered, it **cannot fire from a pull
-request** — GitHub does not dispatch `workflow_run` for PR events. That is
-why the file's correctness is proven by reading it as data
-(`tests/release/`) rather than by executing it on a branch.
+request** — GitHub does not dispatch `workflow_run` for PR events. Its
+correctness is therefore established by reading the file and by the
+dry-run rehearsals below, never by executing it on a branch.
 
 ### The infinite-loop guard, twice over
 
@@ -216,25 +217,31 @@ step, the only lifecycle step that plugin is wired into. It also needs
 network access and a `$GITHUB_TOKEN`, which is why it is deliberately
 **not** part of `just gate`/`just gate-expensive`.
 
-What *is* gated: `tests/release/`'s untagged checks run in `just gate`
-(the `-X` symbol path against `go.mod` and the source, the build target,
-the `workflow_run` binding to CI's workflow `name:`, the Go version pin,
-the matrix and its asset names, the `release` → `build-binaries` output
-handoff, the `v` tag prefix, `.releaserc.json`'s plugin list and shape, and
-`pnpm-lock.yaml`'s agreement with `package.json`), and
-`TestReleaseLdflagsInjectVersion` / `TestReleaseMatrixTargetsCompile` run
-in `just gate-expensive`.
+Nothing in `just gate`/`just gate-expensive` reads the release config
+either — no test parses `release.yml`, `.releaserc.json`, or
+`pnpm-lock.yaml`. Review these by hand when you touch them, because each
+one breaks silently rather than loudly:
 
-`TestReleaseOutputHandoffIsWired` is worth calling out: it pins the
-`new-release-version` / `new-release-published` names across all four
-places that must agree on them — `publishCmd`'s `$GITHUB_OUTPUT` writes,
-the `release` job's `outputs:` block, `build-binaries`' `if:`, and the
-`-ldflags` version expression. Every break in that chain is silent (a
-renamed output makes the `if:` compare false and publishes a tag and a
-Release with zero binaries attached, green), and none of it is reachable
-before a merge. What is still unproven until the first real release is only
-the run-time half: that the publish step fires and that the redirect lands
-in `$GITHUB_OUTPUT`.
+- the `-ldflags` `-X` symbol path, against `go.mod`'s module path and
+  `internal/version`'s package path;
+- the build target, and the matrix's four targets and asset names;
+- the `workflow_run` binding to CI's workflow `name:` — a trigger naming a
+  nonexistent workflow is not an error to GitHub, it just never fires;
+- the Go version pin, kept equal to `ci.yml`'s;
+- the `v` tag prefix hardcoded in `ref:` / `tag_name:`;
+- `.releaserc.json`'s plugin list and order, and `pnpm-lock.yaml`'s
+  agreement with `package.json` — otherwise
+  `pnpm install --frozen-lockfile` fails on main.
+
+The `new-release-version` / `new-release-published` names are worth calling
+out on their own: four places must agree on them — `publishCmd`'s
+`$GITHUB_OUTPUT` writes, the `release` job's `outputs:` block,
+`build-binaries`' `if:`, and the `-ldflags` version expression. A rename
+anywhere along that chain makes the `if:` compare false and publishes a tag
+and a Release with zero binaries attached, green. None of it is reachable
+before a merge; what stays unproven until the first real release is the
+run-time half — that the publish step fires and that the redirect lands in
+`$GITHUB_OUTPUT`.
 
 ## Adding a New Command
 
@@ -268,13 +275,15 @@ in `$GITHUB_OUTPUT`.
 
 1. Add the worked scenario to `docs/acceptance.md` (a `**AC-ID —
    ...**` heading with its Given/When/Then) and a matching row in §2's
-   criteria index table, in the same change — `TestACCoverage`
-   (`tests/e2e/coverage_test.go`) fails if only one exists.
-2. For a `tier: e2e` row, add a `TestAC_<CATEGORY>_<NN>_<ShortName>`
-   function under `tests/e2e/` — `TestACCoverage` fails until both the
-   `docs/acceptance.md` row *and* the `TestAC_*` function exist, and the
-   Test column must name the function it actually finds.
+   criteria index table, in the same change — the two are kept in step by
+   hand, so an orphan on either side goes unnoticed.
+2. For a `tier: e2e` row, write the matching
+   `TestAC_<CATEGORY>_<NN>_<ShortName>` function under `tests/e2e/`
+   yourself, and name it in the Test column exactly as declared.
 3. For `tier: unit`/`tier: integration`, point the Test column at an
    existing (or new) `TestXxx` function anywhere in the repo; for `tier:
    container`, point it at a `just <recipe>` that exists in the justfile.
-4. Run `just test` — `TestACCoverage` is untagged and runs as part of it.
+   For a criterion no automated test covers, write `—` in the Test column
+   and `manual` as the tier rather than leaving it looking discharged.
+4. Run the tier the new test belongs to (`just test`, `just
+   test-integration`, or `just test-e2e`) and confirm it passes.
