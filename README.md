@@ -10,9 +10,11 @@ See `docs/product/prd-mvp.md` for scope and `docs/technical/tdd-mvp.md` for the 
 
 ## Install
 
-From `v1.0.0` onward, each [GitHub
+The release pipeline is built but is deliberately still rehearsing
+(`"dryRun": true` in `.releaserc.json`), so no release has been published
+yet — build from source for now. Once it is switched on, each [GitHub
 release](https://github.com/mattjmcnaughton/agent-logs-extractor/releases)
-carries prebuilt binaries, each one both raw and as a `.tar.gz`:
+will carry prebuilt binaries, each one both raw and as a `.tar.gz`:
 
 | Asset | Platform |
 |---|---|
