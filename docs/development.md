@@ -128,6 +128,35 @@ A branch whose commits are all non-releasing types merges to `main` and
 cuts nothing — which is the intended outcome for a docs-only or
 test-only change, not a failure.
 
+### The publish switch: `dryRun`
+
+**The pipeline currently rehearses instead of publishing.**
+`.releaserc.json` sets `"dryRun": true`, so on every push to `main`
+semantic-release runs in full — verifying plugin conditions, analysing
+commits, computing the next version, and rendering the release notes into
+the job log — and then stops. It creates no tag, no GitHub Release, no
+`CHANGELOG.md`, no commit on `main`, and no issue comments. Because the
+`publishCmd` never runs, `new-release-published` is never written, so
+`build-binaries` is skipped and no binaries are uploaded.
+
+That makes a merge to `main` a live-fire rehearsal: everything up to the
+point of publishing is exercised for real, and the job log states exactly
+what *would* have been released.
+
+**To go live**, change that one line to `"dryRun": false` (or delete it —
+semantic-release defaults to publishing). The commit that does so is itself
+a push to `main`, so the release fires on that merge; its own commit type
+is irrelevant, because the analyser reads every commit since the last tag,
+not just the newest one.
+
+`TestReleaseDryRunIsExplicit` (untagged, runs in `just gate`) requires the
+key to be present and to be a real JSON boolean. It deliberately does *not*
+require a particular value — flipping it is the supported path. It exists
+because the two silent failures here are costly in opposite directions:
+deleting the key publishes when nobody meant to, and writing the *string*
+`"false"` reads like "off" but keeps dry-run on, since every non-empty
+string is truthy in JavaScript.
+
 ### The two-workflow flow
 
 There is no release job inside `ci.yml`. Instead:
