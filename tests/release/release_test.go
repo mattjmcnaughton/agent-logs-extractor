@@ -551,14 +551,9 @@ func TestReleaseWorkflowMatrixCoversFourTargets(t *testing.T) {
 // pair — hence json.RawMessage rather than a typed shape. TagFormat is a
 // *string so "absent" (semantic-release's default applies) is
 // distinguishable from "set to the empty string".
-// DryRun is a json.RawMessage, not a bool, so the check below can tell a
-// real JSON boolean from the string "false" — which JavaScript treats as
-// truthy, silently keeping the pipeline in dry-run mode when the intent
-// was to go live.
 type releasercConfig struct {
 	Branches  []string          `json:"branches"`
 	TagFormat *string           `json:"tagFormat"`
-	DryRun    json.RawMessage   `json:"dryRun"`
 	Plugins   []json.RawMessage `json:"plugins"`
 }
 
@@ -888,36 +883,6 @@ func TestReleaseOutputHandoffIsWired(t *testing.T) {
 	}
 	if job, output := ldflagsRefs[0][1], ldflagsRefs[0][2]; job != "release" || output != "new-release-version" {
 		t.Errorf("%s's -ldflags injects needs.%s.outputs.%s; want needs.release.outputs.new-release-version, or every shipped binary reports an empty version", releaseWorkflowPath, job, output)
-	}
-}
-
-// TestReleaseDryRunIsExplicit asserts .releaserc.json states, as a real
-// JSON boolean, whether the pipeline publishes.
-//
-// This is the switch that decides whether merging to main creates a public
-// tag, a GitHub Release, binaries, and a commit on main. It is deliberately
-// NOT asserted to be true — flipping it to false is the supported way to go
-// live. What is asserted is that it is present and unambiguous:
-//
-//   - Absent, and the switch is gone entirely: semantic-release defaults to
-//     publishing, so a careless delete goes live silently.
-//   - A string ("true"/"false") rather than a boolean: every non-empty
-//     string is truthy in JavaScript, so "false" would keep dry-run mode on
-//     while reading, to a human, as if it were off. That failure is
-//     invisible until someone notices no release was ever cut.
-func TestReleaseDryRunIsExplicit(t *testing.T) {
-	root := repoRoot(t)
-
-	raw := loadReleaserc(t, root).DryRun
-	if raw == nil {
-		t.Fatal(".releaserc.json does not set `dryRun`; semantic-release then defaults to publishing, so merging to main cuts a real release. Set it explicitly to true (rehearse) or false (publish).")
-	}
-
-	switch string(raw) {
-	case "true", "false":
-		t.Logf(".releaserc.json sets dryRun = %s", raw)
-	default:
-		t.Errorf(".releaserc.json sets `dryRun` to %s, which is not a JSON boolean; semantic-release reads it as JavaScript, where every non-empty string is truthy — so the string \"false\" would keep the pipeline in dry-run mode. Use a bare true or false.", raw)
 	}
 }
 

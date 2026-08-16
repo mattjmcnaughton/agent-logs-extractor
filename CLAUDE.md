@@ -114,9 +114,7 @@ in `docs/architecture.md`.
   `.releaserc.json` sets `"dryRun": true`, so each push to `main` rehearses
   the whole pipeline and logs what it would release, creating no tag,
   release, changelog, commit, or binaries. Flip that one line to `false` to
-  go live; `TestReleaseDryRunIsExplicit` keeps the key present and a real
-  JSON boolean without pinning its value. Config lives in
-  `.releaserc.json` + `package.json` +
+  go live. Config lives in `.releaserc.json` + `package.json` +
   `pnpm-lock.yaml`; the pipeline is `.github/workflows/release.yml`,
   triggered by `workflow_run` on the **CI** workflow, so a red CI blocks a
   release. Never run bare `pnpm install` (it rewrites the lockfile) — only
