@@ -149,13 +149,9 @@ a push to `main`, so the release fires on that merge; its own commit type
 is irrelevant, because the analyser reads every commit since the last tag,
 not just the newest one.
 
-`TestReleaseDryRunIsExplicit` (untagged, runs in `just gate`) requires the
-key to be present and to be a real JSON boolean. It deliberately does *not*
-require a particular value — flipping it is the supported path. It exists
-because the two silent failures here are costly in opposite directions:
-deleting the key publishes when nobody meant to, and writing the *string*
-`"false"` reads like "off" but keeps dry-run on, since every non-empty
-string is truthy in JavaScript.
+Write it as a bare JSON boolean, not a quoted string: semantic-release
+reads the config as JavaScript, where every non-empty string is truthy, so
+`"false"` would read like "off" while keeping dry-run on.
 
 ### The two-workflow flow
 

@@ -354,8 +354,7 @@ Two consequences for testing:
   `Dockerfile.duckdb`'s containerized job carried when it landed. Its first
   runs are rehearsals rather than releases: `.releaserc.json` sets
   `"dryRun": true`, so everything up to publishing is exercised for real
-  while nothing is created. `TestReleaseDryRunIsExplicit` keeps that switch
-  present and unambiguous without pinning which way it points.
+  while nothing is created.
 - **So it is tested by being read, not run.** `tests/release/` parses
   `release.yml` as data and checks what can be checked without executing
   it: that the `-ldflags` `-X` symbol path names a variable this tree
