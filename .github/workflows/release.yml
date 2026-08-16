@@ -5,14 +5,14 @@
 # which by design cannot fire from a pull request — GitHub only dispatches
 # it after the named workflow completes on a branch of this repository. So
 # the first real run of this file is the first push to `main` after it
-# merges. Everything about it that CAN be proven without executing it is
-# proven by the `tests/release/` package (untagged + integration tiers),
-# which reads this file as data: the ldflags symbol path, the build target,
-# the CI-workflow binding below, the Go version pin, the matrix and its
-# asset names, the `v` tag prefix, and the output handoff below — the
-# `outputs:` block, build-binaries' `if:`, and .releaserc.json's exec
-# plugin all have to agree on the same two output names, and a rename on
-# any one side would otherwise publish a release with zero binaries, green.
+# merges. Nothing in the test suite reads this file, so every edit here is
+# checked by review alone. Two things in particular fail silently rather
+# than loudly: the ldflags symbol path in the build step below, and the
+# output handoff — the `outputs:` block, build-binaries' `if:`, and
+# .releaserc.json's exec plugin all have to agree on the same two output
+# names, and a rename on any one side publishes a release with zero
+# binaries, green. `.releaserc.json` currently sets "dryRun": true, so
+# pushes to `main` rehearse the whole flow without publishing.
 
 name: Release
 
@@ -101,9 +101,9 @@ jobs:
         uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
         with:
           # Pinned to the same exact patch ci.yml pins (not the "1.25.x"
-          # the sibling repos use): TestReleaseWorkflowGoVersionMatchesCI
-          # asserts the two files agree, so the binaries a release ships
-          # are built by the toolchain the gate actually ran.
+          # the sibling repos use), so the binaries a release ships are
+          # built by the toolchain the gate actually ran. Bump both files
+          # together — nothing checks that they agree.
           go-version: "1.25.0"
           cache: true
 
@@ -112,12 +112,10 @@ jobs:
         # this file: it is only a string to the Go linker, so a typo, a
         # module rename, or a moved internal/version package silently
         # produces binaries that report "dev" — with a green build.
-        # tests/release/ guards it from both ends:
-        # TestReleaseWorkflowLdflagsPathMatchesTree checks the path against
-        # go.mod and internal/version/version.go statically, and
-        # TestReleaseLdflagsInjectVersion (integration tier) builds with
-        # exactly this string and asserts the binary prints the injected
-        # version.
+        # Nothing checks it. If you change this line, rename the module, or
+        # move internal/version, build with this exact flag string and run
+        # `agent-logs-extractor version` to confirm it prints the version
+        # and not "dev".
         env:
           CGO_ENABLED: "0"
           GOOS: ${{ matrix.goos }}

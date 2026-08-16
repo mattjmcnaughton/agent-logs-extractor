@@ -48,8 +48,8 @@ jobs:
   gate-expensive-native:
     name: Gate (expensive, native duckdb)
     # This is the PRIMARY gate for #9's acceptance criterion: it proves the
-    # duckdb integration tier (including the README cookbook acceptance
-    # test) against a real duckdb CLI pinned on the runner.
+    # duckdb integration tier against a real duckdb CLI pinned on the
+    # runner.
     # ALX_REQUIRE_DUCKDB=1 turns requireDuckDB's skip into a hard failure,
     # so a duckdb-install problem here is unmistakably a test failure
     # rather than a silent skip — the same reason the "Verify duckdb" step

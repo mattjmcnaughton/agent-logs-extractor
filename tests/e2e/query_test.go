@@ -9,13 +9,12 @@ import (
 
 // AC-QUERY-05 †
 //
-// AC-QUERY-01–04 are deliberately NOT re-tested here — see
-// docs/acceptance.md §8 and R5: they are already proven end-to-end by
-// TestCookbookQueries (integration tier, internal/adapters/duckdbcli) and
-// TestCookbookQueriesMatchTheREADME (unit tier, same package). This is the
-// one binary-level gap those tests cannot cover: does the real
-// `export duckdb` invocation actually carry the denormalized columns the
-// cookbook queries depend on.
+// AC-QUERY-01–04 are not tested anywhere — see docs/acceptance.md §8 and
+// R5, where they are marked `manual`: their subject is README prose rather
+// than the binary's behavior. This criterion is the binary-level part that
+// is worth an automated test: does the real `export duckdb` invocation
+// actually carry the denormalized columns those cookbook queries depend
+// on.
 func TestAC_QUERY_05_DenormalizedColumns(t *testing.T) {
 	bin := requireDuckDB(t)
 	s := syncFullFixture(t)
