@@ -12,9 +12,8 @@ const (
 	kindUnknown
 )
 
-// bookkeepingTypes are the vendor record types observed in the committed
-// fixtures, plus the two the TDD names but no fixture exercises (mode,
-// summary). None of these ever produce a messages row.
+// bookkeepingTypes names supported non-conversation records. New vendor types
+// are counted separately so local contract checks can report format drift.
 var bookkeepingTypes = map[string]bool{
 	"queue-operation": true,
 	"attachment":      true,

@@ -4,7 +4,7 @@
 // agent-logs-extractor binary as a subprocess and asserts on its
 // observable behavior (stdout, stderr, exit code, filesystem effects)
 // against docs/acceptance.md. The only internal/ import permitted anywhere
-// in this package is internal/testing/ (logfixture) — no internal/core or
+// in this package is internal/testing/ (testlogs) — no internal/core or
 // internal/adapters package may ever be imported here; that constraint is
 // exactly what keeps this tier honestly black-box.
 package e2e

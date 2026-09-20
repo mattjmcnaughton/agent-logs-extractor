@@ -75,12 +75,12 @@ The vendor adapters are the isolation boundary: when a vendor changes its format
 
 - The motivating queries (US-3, US-4) work against the author's real logs using only the README cookbook.
 - A full `sync` over a year of real history completes in seconds.
-- A vendor-format change is absorbed by editing only that vendor's adapter (+ fixtures).
+- A vendor-format change is absorbed by editing only that vendor's adapter (+ synthetic tests and local contracts).
 - The exported `.duckdb` file is directly usable in the DuckDB CLI with no schema explanation beyond column names.
 
 ## Risks
 
-- **Undocumented, unstable vendor formats.** The Claude Code mapping has been verified against a real session log; Codex's is reconstructed from community documentation. Mitigation: fixture-driven adapters (real, scrubbed samples committed as test fixtures), lenient parsing with skip-and-count, `raw` preservation, and a per-record vendor-version column to debug drift.
+- **Undocumented, unstable vendor formats.** Mitigation: synthetic regression tests, explicitly selected local-only live contract checks, lenient parsing with skip-and-count, raw preservation, and session vendor versions. CI does not establish current live compatibility.
 - **DuckDB dependency weight** (CGO vs subprocess). Addressed in `docs/technical/tdd-mvp.md`; the choice is behind a port either way.
 - **Sensitive data concentration.** The store aggregates everything the agent ever saw. Mitigation: local-only by design, documented loudly; redaction stays a candidate post-MVP feature.
 

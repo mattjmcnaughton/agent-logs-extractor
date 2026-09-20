@@ -88,7 +88,7 @@ func TestExecuteRootSyncWithUnknownVendorErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("sync --vendor bogus: want error, got nil")
 	}
-	for _, want := range []string{"claude", "codex", "bogus"} {
+	for _, want := range []string{"bogus", "available: []"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("sync --vendor bogus err = %q, want it to mention %q", err.Error(), want)
 		}

@@ -8,9 +8,10 @@ import (
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/model"
 )
 
-// ErrRebuildFinished is what Put and Commit return once a rebuild has been
-// committed or discarded. Implementations must return it (or wrap it) so
-// callers can errors.Is against one value regardless of adapter.
+// ErrVendorOutsideRebuild rejects a Put for a vendor outside the declared scope.
+var ErrVendorOutsideRebuild = errors.New("ports: vendor is outside rebuild scope")
+
+// ErrRebuildFinished is returned by Put/Commit after commit or discard.
 var ErrRebuildFinished = errors.New("ports: store rebuild already finished")
 
 // ErrInvalidSessionDoc is what Put returns for a doc whose session cannot
@@ -59,11 +60,14 @@ type CanonicalStore interface {
 	// this path rather than deserialized documents.
 	Root() string
 
-	// BeginRebuild starts a new store generation, staged beside the live
-	// store. The returned rebuild must be either committed or discarded;
+	// BeginRebuild stages a new generation. Nil vendors means a full reset.
+	// A non-nil slice replaces only those vendors, preserving all other
+	// vendor subtrees; an empty slice preserves everything and permits no Put.
+	// Invalid vendor values fail before changing the live store.
+	// The returned rebuild must be either committed or discarded;
 	// Discard on a committed rebuild is a no-op, so `defer r.Discard()` is
 	// always safe.
-	BeginRebuild(ctx context.Context) (StoreRebuild, error)
+	BeginRebuild(ctx context.Context, vendors []model.Vendor) (StoreRebuild, error)
 }
 
 // StoreRebuild accumulates one pending store generation. Once the rebuild
@@ -75,8 +79,8 @@ type StoreRebuild interface {
 	Put(ctx context.Context, doc model.SessionDoc) error
 
 	// Commit atomically replaces the live store with everything Put so far.
-	// After Commit the live store contains exactly those docs and nothing
-	// from the previous generation.
+	// After Commit the live store contains the new docs plus any unselected
+	// vendors preserved by BeginRebuild.
 	Commit(ctx context.Context) error
 
 	// Discard drops the pending generation, leaving the live store

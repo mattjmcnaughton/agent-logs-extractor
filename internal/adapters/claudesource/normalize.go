@@ -147,7 +147,7 @@ func (b *builder) addRecord(r rawRecord, links map[int]string, rootSeen map[int]
 	}
 
 	// A record mixing tool_result with text and/or tool_use blocks is not
-	// observed in any fixture; if it ever occurs, treat it as a
+	// part of the supported mixed-content mapping; treat it as a
 	// tool-result carrier (join the results, drop the text and any
 	// tool_use blocks) rather than double-counting it.
 	if !isString && containsToolResult(blocks) {
@@ -202,8 +202,8 @@ func (b *builder) addMessage(r rawRecord, blocks []block, isString bool, str str
 		}
 	case len(r.rec.Content) > 0:
 		// type=="system" records carry text under the top-level "content"
-		// field rather than under "message" (fixture-unverified: no
-		// committed fixture contains a system record).
+		// field rather than under "message". Live contract coverage reports
+		// whether an extractable system record was observed.
 		text = textOf(r.rec.Content)
 	default:
 		b.skips.add(SkipMissingMessage)
@@ -321,7 +321,7 @@ func containsToolResult(blocks []block) bool {
 // This prefers the parent transcript over any subagent transcript
 // regardless of chronological order — a subagent record can sort before
 // some parent records (§C.4), but session-level metadata should still come
-// from the parent file first. Every committed fixture opens with a
+// from the parent file first. Every synthetic example opens with a
 // bookkeeping queue-operation record carrying none of these fields, so
 // "the first record" would yield nothing; this is why the rule is
 // per-field first-non-empty rather than "read the first record".

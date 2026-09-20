@@ -7,20 +7,26 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mattjmcnaughton/agent-logs-extractor/internal/testing/logfixture"
+	"github.com/mattjmcnaughton/agent-logs-extractor/internal/testing/testlogs"
 )
 
 // AC-SCOPE-01
 func TestAC_SCOPE_01_SourcesAreReadOnly(t *testing.T) {
 	s := newSandbox(t)
 	src := t.TempDir()
-	copyTree(t, logfixture.ClaudeRoot(), src)
+	copyTree(t, testlogs.ClaudeRoot(t), src)
 
+	codexSrc := t.TempDir()
+	copyTree(t, testlogs.CodexRoot(t), codexSrc)
+	codexBefore := hashTree(t, codexSrc)
 	before := hashTree(t, src)
-	res := s.run("sync", "--claude-path", src)
+	res := s.run("sync", "--claude-path", src, "--codex-path", codexSrc)
 	wantCode(t, res, 0)
 	after := hashTree(t, src)
 
+	if hashTree(t, codexSrc) != codexBefore {
+		t.Fatal("Codex source changed")
+	}
 	if before != after {
 		t.Errorf("source tree hash changed across a sync: %s -> %s (sync must never write to a vendor source directory)", before, after)
 	}

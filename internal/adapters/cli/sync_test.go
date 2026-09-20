@@ -144,9 +144,9 @@ func TestFormatSyncSummary(t *testing.T) {
 			name: "typical multi-record vendor",
 			in: sync.Summary{Vendors: []sync.VendorSummary{{
 				Vendor: model.VendorClaude, Sessions: 3, Messages: 15, ToolCalls: 4,
-				Skipped: model.SkipCounts{model.SkipBookkeeping: 23},
+				Skipped: model.SkipCounts{model.SkipBookkeeping: 4},
 			}}},
-			want: "claude: 3 sessions, 15 messages, 4 tool calls, 23 records skipped\n",
+			want: "claude: 3 sessions, 15 messages, 4 tool calls, 4 records skipped\n",
 		},
 		{
 			name: "singular counts",
@@ -296,5 +296,24 @@ func TestSyncCommandWithAnUnavailableVendorErrors(t *testing.T) {
 	}
 	if out.String() != "" {
 		t.Errorf("stdout = %q, want empty (no summary on a rejected vendor)", out.String())
+	}
+}
+
+func TestRegisteredThirdVendorCanBeSelectedThroughCLI(t *testing.T) {
+	for _, args := range [][]string{{"sync", "--vendor", "testvendor"}, {"sync"}} {
+		store := fakes.NewCanonicalStore()
+		src := fakes.NewConversationSource("testvendor")
+		src.Seed("/third", "/third/one", model.SessionDoc{Session: model.Session{Vendor: "testvendor", SessionID: "testvendor:one"}}, model.ParseStats{})
+		root := NewRoot(Deps{Sync: sync.New([]ports.ConversationSource{src}, store, nil), DefaultRoots: map[model.Vendor]string{"testvendor": "/third"}})
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&out)
+		root.SetArgs(args)
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		if len(store.Committed) != 1 || !strings.Contains(out.String(), "testvendor: 1 session") {
+			t.Fatal(store.SessionIDs(), out.String())
+		}
 	}
 }

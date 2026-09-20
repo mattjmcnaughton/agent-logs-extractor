@@ -15,7 +15,7 @@ import (
 )
 
 // ErrNoSourceForVendor is returned by Run when a Request names a vendor
-// with no registered source — e.g. `sync --vendor codex` before #10 lands.
+// with no registered source in this build.
 var ErrNoSourceForVendor = errors.New("sync: no source registered for vendor")
 
 // SourceRequest names one vendor source to ingest and the root to read it
@@ -83,8 +83,7 @@ type Sync struct {
 //
 // The CLI's default fan-out (no --vendor passed) is filtered by Vendors():
 // it syncs whatever this Sync actually has a source for, rather than
-// hardcoding both vendor names, so a deferred adapter (Codex, until #10)
-// is simply absent from the default run instead of making Run fail.
+// hardcoding vendor names. Unregistered adapters are absent from the default run.
 func New(sources []ports.ConversationSource, store ports.CanonicalStore, log *slog.Logger) *Sync {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -157,7 +156,11 @@ func (s *Sync) Run(ctx context.Context, req Request) (Summary, error) {
 		srcs[i] = src
 	}
 
-	r, err := s.store.BeginRebuild(ctx)
+	vendors := make([]model.Vendor, len(req.Sources))
+	for i, sr := range req.Sources {
+		vendors[i] = sr.Vendor
+	}
+	r, err := s.store.BeginRebuild(ctx, vendors)
 	if err != nil {
 		return Summary{}, fmt.Errorf("sync: beginning store rebuild: %w", err)
 	}
