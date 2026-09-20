@@ -155,6 +155,17 @@ Log level is controlled by the `--log-level` persistent flag (debug, info, warn,
 
 See [docs/development.md](docs/development.md) for setup instructions and common tasks.
 
+## Agent skill
+
+The [agent-logs-extractor skill](skills/agent-logs-extractor/SKILL.md) explains
+how to use the CLI, discovers capabilities from its help and output, and
+translates natural-language requests into sync, export, and queries. For example: "Sync my Claude logs", "Export my store to
+./logs.duckdb", or "Which projects have the most sessions?"
+
+Its source lives in `skills/`, with relative symlinks under `.agents/skills/`
+and `.claude/skills/` for use from this checkout. The skill uses the existing CLI
+and DuckDB; it does not add a natural-language subcommand to the binary.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
