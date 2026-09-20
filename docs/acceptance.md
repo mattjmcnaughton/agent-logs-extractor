@@ -15,7 +15,7 @@ A scenario **passes** only if every assertion in its **Then** holds.
 Most criteria below (tier `e2e`) run the **compiled binary** as a
 subprocess, black-box, from `tests/e2e/`: no `internal/core` or
 `internal/adapters` import is permitted anywhere in that package, only
-`internal/testing/logfixture` for locating fixtures (`tests/e2e/main_test.go`'s
+`internal/testing/testlogs` for generating synthetic examples (`tests/e2e/main_test.go`'s
 package doc). `$ALXBIN`, if set, names the binary under test; otherwise
 `TestMain` builds one itself. A `tier: unit` or `tier: integration`
 criterion instead points at an existing test elsewhere in the tree — see
@@ -33,27 +33,26 @@ two exit codes, unchanged by this ticket:
 | `0` | Success — including a bare invocation, which prints help and exits `0` (cobra's default for a command group with no `RunE`; see R2) |
 | `1` | Any failure — a bad flag, an unknown subcommand, a missing sink, a failed sync or export |
 
-### 1.3 Fixture topology and the numbers it yields
+### 1.3 Synthetic topology and expected counts
 
-The e2e tier reads the same committed Claude fixture tree
-`internal/testing/logfixture/claude/` that `internal/core/sync`'s and
-`internal/adapters/claudesource`'s own test tiers already pin exact counts
-against — **the fixture numbers below are now pinned in three places**:
-`internal/core/sync/sync_integration_test.go`, this document, and the e2e
-tests in `tests/e2e/`. A future fixture regeneration (see
-`internal/testing/logfixture/README.md`) must update all three or the e2e
-tier and the integration tier will disagree.
+`internal/testing/testlogs` generates invented records in temporary directories
+for parser, integration and e2e tests. No captured vendor files are committed.
+Keep these counts and the corresponding integration/e2e assertions in sync:
 
-- The full fixture tree (3 project directories: sidechain, tool-error,
-  single-turn/scratchpad) yields **3 sessions, 15 messages, 4 tool calls,
-  23 records skipped** when synced.
-- The pathological fixture tree (`internal/testing/logfixture/pathological/claude`)
-  yields **1 session, 4 messages, 1 tool call, 14 records skipped** (12
-  bookkeeping + 1 malformed line + 1 unknown record type).
-- Seeding only the tool-error and single-turn/scratchpad projects (omitting
-  the sidechain project) yields **2 sessions, 8 messages, 2 tool calls, 14
-  records skipped**; adding the sidechain project back yields the full 3/15/4/23
-  line (AC-SYNC-04).
+- Claude: **3 sessions, 15 messages, 4 tool calls, 4 records skipped**.
+- Claude without the sidechain project: **2 sessions, 8 messages, 2 tool calls,
+  2 records skipped**.
+- Pathological Claude: **1 session, 4 messages, 1 tool call, 5 records skipped**
+  (3 bookkeeping, 1 malformed line, 1 unknown record type). Repeated session IDs
+  demonstrate last-file-wins behavior.
+- Codex, including active, inherited-history and archived examples:
+  **3 sessions, 10 messages, 4 tool calls, 7 records skipped**.
+- Combined export: **6 sessions, 25 messages, 8 tool calls**.
+
+For invocations without `--vendor`, stdout contains one line for each registered
+source. In Claude-only scenarios, append exactly
+`codex: 0 sessions, 0 messages, 0 tool calls, 0 records skipped\n` to the
+Claude summary below. Vendor-specific invocations print only their own summary.
 
 ### 1.4 Per-scenario isolation
 
@@ -108,8 +107,8 @@ gate-expensive jobs, and the `test-e2e-container` image, all set it).
 | AC-SYNC-02 | US-1 | bare `sync` resolves `~/.claude` from the sandbox home, identical summary | `TestAC_SYNC_02_BareSyncUsesSandboxHome` | e2e |
 | AC-SYNC-03 | US-2 | re-run is byte-identical, no leftovers | `TestAC_SYNC_03_RerunIsIdempotent` | e2e |
 | AC-SYNC-04 | US-2 | a grown source yields an updated store | `TestAC_SYNC_04_RerunPicksUpNewSessions` | e2e |
-| AC-SYNC-05 | US-1 | `--vendor claude` equals bare `sync` | `TestAC_SYNC_05_VendorClaudeMatchesBareSync` | e2e |
-| AC-SYNC-06 | US-1 | `--vendor codex` exits 1 naming what is available | `TestAC_SYNC_06_VendorCodexNotYetAvailable` | e2e |
+| AC-SYNC-05 | US-1 | selected-vendor refresh preserves other vendors | `TestAC_SYNC_05_SelectedVendorPreservesOthers` | e2e |
+| AC-SYNC-06 | US-1 | Codex active/archive logs sync through explicit/default roots | `TestAC_SYNC_06_CodexActiveAndArchived` | e2e |
 | AC-SYNC-07 | US-1 | `--vendor bogus` exits 1 naming both accepted values | `TestAC_SYNC_07_UnknownVendor` | e2e |
 | AC-SKIP-01 | US-6 | the pathological tree never fails a sync, exact counts | `TestAC_SKIP_01_PathologicalTreeNeverFails` | e2e |
 | AC-SKIP-02 | US-6 | `--log-level debug` emits the skip-by-reason breakdown; default does not | `TestAC_SKIP_02_DebugPrintsSkipBreakdown` | e2e |
@@ -178,7 +177,7 @@ is no direct observable signal for "which level is in effect" other than
 already pins), so that effect stands in as the proxy across all three
 sub-cases below.
 
-- Given: `agent-logs-extractor sync --claude-path <the committed Claude
+- Given: `agent-logs-extractor sync --claude-path <the generated Claude
   fixture root>` (same fixture and skip breakdown as AC-SKIP-02).
 - When (1): `AGENT_LOGS_EXTRACTOR_LOG_LEVEL=warn` in the environment,
   `--log-level debug` on the command line.
@@ -207,9 +206,9 @@ sensitive benchmark to assert honestly.
 
 **AC-SYNC-01 — fixture tree summary**
 - Given: the sandbox's `~/.claude` is unseeded.
-- When: `agent-logs-extractor sync --claude-path <the committed Claude fixture root>`.
+- When: `agent-logs-extractor sync --claude-path <the generated Claude fixture root>`.
 - Then: exit `0`; stdout is **exactly**
-  `claude: 3 sessions, 15 messages, 4 tool calls, 23 records skipped\n`;
+  `claude: 3 sessions, 15 messages, 4 tool calls, 4 records skipped\n`;
   the store holds exactly 3 files under `sessions/claude/`.
 
 **AC-SYNC-02 — bare `sync` uses the sandbox home**
@@ -218,7 +217,7 @@ sensitive benchmark to assert honestly.
 - Then: exit `0`; stdout is identical to AC-SYNC-01's.
 
 **AC-SYNC-03 — re-run is idempotent**
-- Given: a sandbox synced once already (AC-SYNC-01's invocation).
+- Given: a sandbox synced once with both explicit Claude and Codex fixture roots.
 - When: the identical `sync` invocation runs again.
 - Then: exit `0`; stdout is byte-identical to the first run's; the on-disk
   `sessions/` tree hashes identically (`hashTree`) before and after; no
@@ -230,19 +229,22 @@ sensitive benchmark to assert honestly.
 - When: `sync` runs, then the sidechain fixture project is seeded in
   addition, then `sync` runs again.
 - Then: the first run's stdout is **exactly**
-  `claude: 2 sessions, 8 messages, 2 tool calls, 14 records skipped\n`;
-  the second run's stdout is the full 3/15/4/23 line from AC-SYNC-01.
+  `claude: 2 sessions, 8 messages, 2 tool calls, 2 records skipped\n`;
+  the second run's stdout is the full 3/15/4/4 line from AC-SYNC-01.
 
-**AC-SYNC-05 — `--vendor claude` matches bare `sync`**
-- Given: the sandbox seeded as AC-SYNC-02.
-- When: `sync --vendor claude` runs, and separately a bare `sync` runs in an
-  identically-seeded fresh sandbox.
-- Then: both runs' stdout are identical.
+**AC-SYNC-05 — selected-vendor refresh preserves other vendors**
+- Given: both vendor fixture trees are synced in one sandbox.
+- When: each vendor is synced separately with `--vendor`.
+- Then: exit `0`; only the selected vendor has a summary line; the other
+  vendor's stored bytes remain identical. Removing the Codex source and syncing
+  Codex again removes stale Codex sessions and preserves Claude.
 
-**AC-SYNC-06 — `--vendor codex` is not yet available**
-- When: `agent-logs-extractor sync --vendor codex`.
-- Then: exit `1`; stderr contains
-  `vendor "codex" is not supported by this build yet; available: [claude]`.
+**AC-SYNC-06 — Codex active and archived history**
+- Given: the full Codex fixture tree, including its archived example.
+- When: `sync --vendor codex` with the default sandbox root, and separately
+  `sync --vendor codex --codex-path <fixture root>`.
+- Then: exit `0`; exactly 3 Codex sessions, 10 messages, 4 tool calls and
+  7 skipped records; no Claude summary line. Both source locations work.
 
 **AC-SYNC-07 — unknown `--vendor` value**
 - When: `agent-logs-extractor sync --vendor bogus`.
@@ -251,28 +253,28 @@ sensitive benchmark to assert honestly.
 ## 5. Skip accounting
 
 **AC-SKIP-01 — the pathological tree never fails a sync**
-- When: `sync --claude-path <the committed pathological Claude fixture root>`.
+- When: `sync --claude-path <the generated pathological Claude fixture root>`.
 - Then: exit `0`; stdout is **exactly**
-  `claude: 1 session, 4 messages, 1 tool call, 14 records skipped\n`
+  `claude: 1 session, 4 messages, 1 tool call, 5 records skipped\n`
   (singular nouns pinned: "1 session", "1 tool call", not "1 sessions"/"1 tool calls").
 
 **AC-SKIP-02 — the skip breakdown is a debug-only diagnostic**
 - Given: the sandbox seeded with the full fixture tree.
 - When: `sync --log-level debug` runs, and separately a default-level `sync` runs.
 - Then: the debug run's stderr contains `msg="sync: skipped records"`,
-  `reason=bookkeeping_record`, and `count=23`; the default-level run's
+  `reason=bookkeeping_record`, and `count=4`; the default-level run's
   stderr contains no `reason=` substring at all.
 
 **AC-SKIP-03 — an unreadable file is counted, not fatal**
 - Given: a **copy** of the full fixture tree in a mutable temp directory
-  (never the committed fixture itself), with one extra file added: a
+  (generated for this test), with one extra file added: a
   **broken symlink** `broken.jsonl -> /nonexistent/nope.jsonl` inside one
   project directory (a broken symlink, not `chmod 000` — the container
   runs as root, where mode bits are ignored, and that variant would
   silently pass there).
 - When: `sync --claude-path <the copied tree>`.
 - Then: exit `0`; stdout is **exactly**
-  `claude: 3 sessions, 15 messages, 4 tool calls, 23 records skipped, 1 file unreadable\n`.
+  `claude: 3 sessions, 15 messages, 4 tool calls, 4 records skipped, 1 file unreadable\n`.
 
 ## 6. Missing vendor directories
 
@@ -301,10 +303,11 @@ sensitive benchmark to assert honestly.
   (`<data-home>/agent-logs-extractor/export/logs.duckdb`).
 
 **AC-EXPORT-03 † — table counts match the sync summary**
-- Given: a sandbox synced against the full fixture tree (3/15/4/23), then exported.
+- Given: a sandbox synced against both full vendor fixture trees, then exported.
 - When: the exported file is queried for `SELECT count(*) FROM sessions`,
   `... FROM messages`, `... FROM tool_calls`.
-- Then: `sessions`=3, `messages`=15, `tool_calls`=4.
+- Then: `sessions`=6, `messages`=25, `tool_calls`=8; two distinct vendors;
+  every tool joins to a message in the same session.
 
 **AC-EXPORT-04 — missing duckdb binary**
 - Given: `PATH` scrubbed of every directory containing a `duckdb`
@@ -390,8 +393,7 @@ sensitive benchmark to assert honestly.
 
 **AC-SCOPE-01 — vendor sources are read-only**
 - Given: a fresh **copy** of the full fixture tree in a mutable temp
-  directory (never the committed fixture — see the ticket's fixture-safety
-  rule).
+  directory generated for this test.
 - When: `hashTree` runs before and after `sync --claude-path <the copy>`.
 - Then: the two hashes are identical.
 

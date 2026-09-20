@@ -21,7 +21,7 @@ import (
 func seedStore(t *testing.T, store *fakes.FakeCanonicalStore, docs ...model.SessionDoc) {
 	t.Helper()
 	ctx := context.Background()
-	r, err := store.BeginRebuild(ctx)
+	r, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("seedStore: BeginRebuild: %v", err)
 	}
@@ -508,7 +508,7 @@ func TestRunWithACancelledContextDoesNotCommit(t *testing.T) {
 	// Pins Run's own top-level `if err := ctx.Err(); err != nil { return
 	// Summary{}, err }` (sync.go:141-143), which returns ctx.Err() raw and
 	// unwrapped. If that check is deleted, Run would instead reach
-	// s.store.BeginRebuild(ctx), whose own ctx.Err() check (mirroring
+	// s.store.BeginRebuild(ctx, nil), whose own ctx.Err() check (mirroring
 	// jsonlstore.Store.BeginRebuild) fails too — but wrapped by Run in
 	// "sync: beginning store rebuild: %w". A mutant deleting sync.go's own
 	// check would still satisfy errors.Is(err, context.Canceled) above, so
@@ -656,7 +656,7 @@ func TestRunLogsTheSkipBreakdownAtDebug(t *testing.T) {
 // covered by TestRunSkipsUnstorableSessionDocsWithoutFailing). Deleting the
 // zero-doc branch entirely falls through to the ValidSessionDoc check below
 // it, which also skips the doc — but at warn instead of debug, which this
-// test would catch on the real fixture's bookkeeping-only files too.
+// test would catch on the synthetic example's bookkeeping-only files too.
 func TestRunLogsAZeroDocOnlyAtDebug(t *testing.T) {
 	ctx := context.Background()
 	src := fakes.NewConversationSource(model.VendorClaude)
@@ -711,5 +711,23 @@ func TestNewWithDuplicateVendorLogsTheWarning(t *testing.T) {
 
 	if got := buf.String(); !strings.Contains(got, "duplicate") || !strings.Contains(got, string(model.VendorClaude)) {
 		t.Errorf("log output = %q, want it to mention the duplicate vendor %q", got, model.VendorClaude)
+	}
+}
+
+func TestRunPreservesUnselectedAndUnregisteredVendors(t *testing.T) {
+	store := fakes.NewCanonicalStore()
+	seedStore(t, store,
+		model.SessionDoc{Session: model.Session{Vendor: "claude", SessionID: "claude:old"}},
+		model.SessionDoc{Session: model.Session{Vendor: "testvendor", SessionID: "testvendor:old"}},
+		model.SessionDoc{Session: model.Session{Vendor: "unregistered", SessionID: "unregistered:old"}})
+	third := fakes.NewConversationSource("testvendor")
+	third.Seed("/third", "/third/new", model.SessionDoc{Session: model.Session{Vendor: "testvendor", SessionID: "testvendor:new"}}, model.ParseStats{})
+	s := New([]ports.ConversationSource{third}, store, nil)
+	_, err := s.Run(context.Background(), Request{Sources: []SourceRequest{{Vendor: "testvendor", Root: "/third"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(store.SessionIDs(), []string{"claude:old", "testvendor:new", "unregistered:old"}) {
+		t.Fatal(store.SessionIDs())
 	}
 }

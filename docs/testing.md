@@ -31,7 +31,7 @@ in an environment with no live vendor history.
 |---|---|---|---|
 | _none_ | Pure unit tests; fast; no I/O outside the Go test runtime | `just test` | Yes — `just gate` |
 | `integration` | Touches a real local dependency (filesystem, a real `duckdb` binary when present) | `just test-integration` | Yes — `just gate-expensive` |
-| `contract` | Parses a developer's own live `~/.claude` (or a fixture tree pointed at by `ALX_CONTRACT_CLAUDE_PATH`) | `just test-contract` | **No — never gated** |
+| `contract` | Parses explicitly selected Claude/Codex trees via `ALX_CONTRACT_CLAUDE_PATH` / `ALX_CONTRACT_CODEX_PATH` | `just test-contract` | **No — never gated** |
 | `e2e` | Execs the compiled binary as a subprocess | `just test-e2e` / `just test-e2e-container` | **No — never gated** |
 
 `contract` and `e2e` are excluded from `just gate` and `just gate-expensive`
@@ -116,8 +116,8 @@ test-integration` (and as part of `just gate-expensive`).
 | `adapters/cli` | Full `sync` against a real temp filesystem | `sync_integration_test.go` |
 | `adapters/jsonlstore` | Real `os.TempDir()` store root | `jsonlstore_integration_test.go` |
 | `adapters/duckdbcli` | A real `duckdb` binary on `PATH` | `duckdbcli_integration_test.go` |
-| `adapters/duckdbcli` (cookbook) | Real `duckdb`, real export of the committed fixtures | `cookbook_integration_test.go` |
-| `core/sync` | Real fixture trees on a real temp filesystem | `sync_integration_test.go` |
+| `adapters/duckdbcli` (cookbook) | Real `duckdb`, real export of the synthetic examples | `cookbook_integration_test.go` |
+| `core/sync` | Invented records on a real temp filesystem | `sync_integration_test.go` |
 
 **The duckdb skip-vs-fail rule.** `internal/adapters/duckdbcli`'s
 integration tests need a real `duckdb` CLI on `PATH`; `requireDuckDB(t)`
@@ -133,54 +133,21 @@ for a developer who doesn't want to install duckdb locally at all.
 
 ## Contract tier
 
-**Location.** `internal/adapters/claudesource/claudesource_contract_test.go`,
-build tag `//go:build contract`. Run only via `just test-contract`; never
-in `just gate`/`just gate-expensive`.
+Live vendor checks are **local-only and explicitly opt-in**. They never run in
+CI or either gate. `just test-contract` requires `ALX_CONTRACT_CLAUDE_PATH`
+and/or `ALX_CONTRACT_CODEX_PATH`; unset paths and empty sources skip. A set `CI`
+variable also forces a skip. There is no implicit HOME lookup.
 
-**What it catches.** It parses whatever `~/.claude` tree
-`ALX_CONTRACT_CLAUDE_PATH` points at and asserts the structural invariants
-every `SessionDoc` must satisfy, then reports drift observations via
-`t.Log`: unknown record types, malformed lines, dangling links, a session's
-`cwd` changing mid-conversation (`cwd_drift` — instruments
-`docs/technical/tdd-mvp.md`'s open question 2), and more. It is **strictly
-read-only**: only `Source.List`/`Source.Parse` are ever called, never a
-`CanonicalStore`.
+`internal/testing/contracts` reads raw records and checks them against parsed
+output; `internal/testing/invariants` checks the unified model. Tests for both
+packages use invented examples and run in CI. The live wrappers use discard
+loggers and report only aggregate counts and fixed diagnostic labels. They do
+not save raw logs, normalized documents, paths, IDs, text, or error details.
 
-**Why the engine is split out.** `internal/testing/invariants` (§4's
-"pure functions" table above) is what makes this tier provable at all in
-an environment with no live vendor history: `Check(doc) []Violation`
-reports hard structural failures a conforming source adapter must never
-produce; `Observe(doc) []Observation` reports drift signals that are never
-fatal on their own. Both are exhaustively unit-tested (no build tag,
-`invariants_test.go`) against hand-built `SessionDoc`s, so the *rules* are
-proven by `just test`; the contract test itself only proves that a real
-`~/.claude` still parses into docs those rules accept.
-
-**The total-ingestion-loss hard failure.** The contract test also fails
-outright (not just observes) if the resolved root yields session files but
-zero sessions, or sessions but zero messages — total ingestion loss, e.g.
-from a vendor renaming a field this tool depends on, is a hard failure,
-never a silent zero-row pass.
-
-**The require-don't-default rule, and its privacy rationale.**
-`resolveContractRoot` **requires `ALX_CONTRACT_CLAUDE_PATH` to be set at
-all** — with it unset, the test SKIPs immediately rather than falling back
-to `AGENT_LOGS_EXTRACTOR_HOME`/`$HOME` or any other live `~/.claude`. This
-is deliberate and mechanical: CI never sets `ALX_CONTRACT_CLAUDE_PATH`, and
-a contributor's own sandbox transcript (or any other live history) must
-never be read by accident just because the env var was forgotten. The
-variable is **test-only** — never read by the CLI or by wiring, never a
-flag, never documented in `README.md` (`docs/acceptance.md` §12 R3).
-
-**The two invocation recipes** (see `docs/development.md` for the exact
-command lines): point `ALX_CONTRACT_CLAUDE_PATH` at an empty directory to
-exercise the skip path, or at the committed fixture tree (or your own real
-`~/.claude`) to exercise the found-logs path.
-
-**Consent warning.** Never point `ALX_CONTRACT_CLAUDE_PATH` at another
-session's or another person's real Claude Code history without their
-consent — this tier only reads, but a transcript is still someone's
-private conversation log.
+See [Live log contracts](log-contracts.md) for the assumptions, limitations,
+report interpretation and commands. The internal maintainer skill
+[validate-log-contracts](../tests/skills/validate-log-contracts/SKILL.md) guides
+local verification before updating a vendor mapping.
 
 ## E2E tier
 
@@ -189,7 +156,7 @@ private conversation log.
 
 **Black-box import rule.** No `internal/core` or `internal/adapters` import
 is permitted anywhere in `tests/e2e/` — the only `internal/` import allowed
-is `internal/testing/logfixture`, for locating fixtures. This is what keeps
+is `internal/testing/testlogs`, for generating synthetic examples. This is what keeps
 the tier honestly black-box: it only ever talks to the compiled binary.
 
 **One Go test function per AC ID.** The pattern is
@@ -242,40 +209,21 @@ test-e2e-container` reuses `Dockerfile.duckdb` (no second image), running
 time. `ALX_REQUIRE_DUCKDB=1` is already an image `ENV`, so every `†`
 criterion hard-fails inside the container instead of skipping.
 
-## Fixtures and their provenance (D8)
+## Synthetic examples
 
-Real, scrubbed vendor session logs live under `internal/testing/logfixture/`
-and are **verbatim ground truth** — never hand-edit or move them.
-Regenerate with `just scrub-fixture`; see
-`internal/testing/logfixture/README.md` for the exact commands used to
-generate and scrub each committed fixture, and for the redaction rules the
-scrub engine applies.
+`internal/testing/testlogs` generates small invented Claude and Codex records
+inside test-owned temporary directories. No captured vendor JSONL, metadata
+sidecars, or derived session JSON goldens are retained in the repository.
+Tests assert explicit expected fields, counts, joins, raw-byte preservation,
+and malformed-input handling. Hand-built records in adapter unit tests cover
+additional edge cases. The SQL-only DuckDB goldens remain: they contain schema
+and export SQL, not vendor data.
 
-**Two documented exceptions to "never hand-edit":**
-
-1. The single-turn scratchpad fixture
-   (`claude/projects/-tmp-claude-0-...-scratchpad-fixture-project/`)
-   predates `just scrub-fixture` and was hand-scrubbed.
-2. **All of `pathological/`** — malformed inputs exercising the
-   skip-and-count contract — cannot be tool-generated even in principle:
-   the scrub engine requires its input to already be a well-formed JSON
-   object and rejects anything else, so a tool whose whole job is refusing
-   malformed input cannot be used to produce malformed input.
-
-**The golden-file coupling.** Regenerating a Claude fixture changes ids,
-`toolu_` ids, and timestamps, so it forces regenerating
-`internal/adapters/claudesource`'s golden files too:
-`go test ./internal/adapters/claudesource -run TestGoldenParse -update`,
-then review the diff as a drift report — id/timestamp churn is expected,
-but a changed message/tool-call count or a new `unknown_record_type` is a
-real behavior change to investigate, not to wave through.
-
-**The path-charset rule.** A fixture's generating source path must contain
-only `[A-Za-z0-9/-]` — Claude Code encodes a project directory name from
-the cwd by replacing every non-alphanumeric character with `-`, while the
-scrub engine's path renaming rewrites only `/`; any other character makes
-the two diverge silently. See `internal/testing/logfixture/README.md` for
-the full rule and the alphanumeric `mktemp` template it recommends.
+Synthetic examples specify intended behavior; they cannot establish that a
+vendor still writes that format. Live compatibility is checked locally through
+the opt-in contract tier. CI deliberately proves only behavior against our
+assumptions. Changes to shared examples require updating the counts in
+`docs/acceptance.md` and their integration/e2e assertions together.
 
 ## The AC-ID rule
 
@@ -332,5 +280,4 @@ to `main`:
   pyramid cheap to populate.
 - `docs/acceptance.md` — the AC IDs every `e2e`-tier test (and a handful of
   `unit`/`integration`/`container`-tier tests) maps to.
-- `internal/testing/logfixture/README.md` — full fixture provenance,
-  regeneration commands, and the scrub engine's redaction rules.
+- `docs/log-contracts.md` — local verification and report interpretation.

@@ -1,6 +1,6 @@
 ---
 name: agent-logs-extractor
-description: Explain and use the agent-logs-extractor CLI from natural-language requests to import coding-agent logs, export data, and query conversation history. Discover capabilities from the installed CLI. Use for operating the tool, rather than developing its source code.
+description: Public-facing skill to explain and use the agent-logs-extractor CLI from natural-language requests to import coding-agent logs, export data, and query conversation history. Discover capabilities from the installed CLI. Use for operating the tool, rather than developing its source code.
 ---
 
 # Agent logs extractor
