@@ -55,6 +55,7 @@ import (
 
 	"github.com/spf13/afero"
 
+	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/model"
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/ports"
 )
 
@@ -106,9 +107,14 @@ func (s *Store) Root() string {
 // BeginRebuild creates the store root if missing, sweeps any leftover
 // staging/trash directories from a previous interrupted rebuild, and
 // starts a fresh pending generation staged beside the live store.
-func (s *Store) BeginRebuild(ctx context.Context) (ports.StoreRebuild, error) {
+func (s *Store) BeginRebuild(ctx context.Context, vendors []model.Vendor) (ports.StoreRebuild, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	for _, v := range vendors {
+		if !ports.ValidSessionDoc(model.Session{Vendor: v, SessionID: string(v) + ":scope"}) {
+			return nil, ports.ErrInvalidSessionDoc
+		}
 	}
 	if s.root == "" {
 		return nil, fmt.Errorf("jsonlstore: store root is empty")
@@ -127,7 +133,18 @@ func (s *Store) BeginRebuild(ctx context.Context) (ports.StoreRebuild, error) {
 		return nil, fmt.Errorf("jsonlstore: creating staging directory: %w", err)
 	}
 
-	return &rebuild{s: s, staging: staging}, nil
+	r := &rebuild{s: s, staging: staging}
+	if vendors != nil {
+		r.selected = make(map[model.Vendor]bool, len(vendors))
+		for _, v := range vendors {
+			r.selected[v] = true
+		}
+		if err := r.preserve(ctx); err != nil {
+			_ = r.Discard()
+			return nil, err
+		}
+	}
+	return r, nil
 }
 
 // sweep best-effort removes any ".staging-*"/".trash-*" directories left

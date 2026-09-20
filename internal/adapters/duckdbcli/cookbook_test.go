@@ -47,7 +47,7 @@ func TestCookbookQueriesMatchTheREADME(t *testing.T) {
 
 // readmePath resolves README.md at the repository root, relative to this
 // package's own source file — the same runtime.Caller pattern
-// internal/testing/logfixture.Dir() uses, so this test works regardless of
+// internal/testing/testlogs.Dir(t) uses, so this test works regardless of
 // the caller's own working directory.
 func readmePath(t *testing.T) string {
 	t.Helper()

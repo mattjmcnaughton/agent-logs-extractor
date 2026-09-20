@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mattjmcnaughton/agent-logs-extractor/internal/testing/logfixture"
+	"github.com/mattjmcnaughton/agent-logs-extractor/internal/testing/testlogs"
 )
 
 // syncFullFixture seeds and syncs the full Claude fixture tree into a fresh
@@ -17,7 +17,7 @@ import (
 func syncFullFixture(t *testing.T) *sandbox {
 	t.Helper()
 	s := newSandbox(t)
-	res := s.run("sync", "--claude-path", logfixture.ClaudeRoot())
+	res := s.run("sync", "--claude-path", testlogs.ClaudeRoot(t))
 	if res.code != 0 {
 		t.Fatalf("seeding sync failed: code=%d stdout=%q stderr=%q", res.code, res.stdout, res.stderr)
 	}
@@ -68,12 +68,13 @@ func TestAC_EXPORT_02_DefaultOutPath(t *testing.T) {
 func TestAC_EXPORT_03_TablesMatchTheSyncSummary(t *testing.T) {
 	bin := requireDuckDB(t)
 	s := syncFullFixture(t)
+	wantCode(t, s.run("sync", "--vendor", "codex", "--codex-path", testlogs.CodexRoot(t)), 0)
 
 	out := filepath.Join(t.TempDir(), "logs.duckdb")
 	res := s.run("export", "duckdb", "--out", out)
 	wantCode(t, res, 0)
 
-	wantCounts := map[string]int{"sessions": 3, "messages": 15, "tool_calls": 4}
+	wantCounts := map[string]int{"sessions": 6, "messages": 25, "tool_calls": 8}
 	for table, want := range wantCounts {
 		rows := duckdbJSON(t, bin, out, "SELECT count(*) AS n FROM "+table)
 		if len(rows) != 1 {
@@ -82,6 +83,14 @@ func TestAC_EXPORT_03_TablesMatchTheSyncSummary(t *testing.T) {
 		if got := asInt(t, rows[0]["n"]); got != want {
 			t.Errorf("%s row count = %d, want %d", table, got, want)
 		}
+	}
+	rows := duckdbJSON(t, bin, out, "SELECT count(*) AS n FROM tool_calls t LEFT JOIN messages m ON t.message_id=m.message_id WHERE m.message_id IS NULL OR m.session_id <> t.session_id")
+	if asInt(t, rows[0]["n"]) != 0 {
+		t.Fatal("invalid mixed-vendor tool joins")
+	}
+	rows = duckdbJSON(t, bin, out, "SELECT count(DISTINCT vendor) AS n FROM sessions")
+	if asInt(t, rows[0]["n"]) != 2 {
+		t.Fatal("missing vendor in export")
 	}
 }
 

@@ -15,7 +15,7 @@ func TestFakeCanonicalStoreCommitReplacesTheLiveGeneration(t *testing.T) {
 	ctx := context.Background()
 	store := NewCanonicalStore()
 
-	r1, err := store.BeginRebuild(ctx)
+	r1, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -29,7 +29,7 @@ func TestFakeCanonicalStoreCommitReplacesTheLiveGeneration(t *testing.T) {
 		t.Fatalf("after first commit SessionIDs() = %v, want [claude:one]", got)
 	}
 
-	r2, err := store.BeginRebuild(ctx)
+	r2, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestFakeCanonicalStoreDiscardAndFailedCommitLeaveTheLiveStoreIntact(t *test
 	store := NewCanonicalStore()
 
 	// Seed a committed generation.
-	r0, err := store.BeginRebuild(ctx)
+	r0, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestFakeCanonicalStoreDiscardAndFailedCommitLeaveTheLiveStoreIntact(t *test
 	want := []string{"claude:live"}
 
 	// Discard should leave the store untouched.
-	r1, err := store.BeginRebuild(ctx)
+	r1, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestFakeCanonicalStoreDiscardAndFailedCommitLeaveTheLiveStoreIntact(t *test
 
 	// A failed commit should also leave the store untouched.
 	store.CommitErr = errors.New("boom")
-	r2, err := store.BeginRebuild(ctx)
+	r2, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestFakeStoreRebuildDiscardThenCommitErrorsAndLeavesTheLiveStoreIntact(t *t
 	store := NewCanonicalStore()
 
 	// Seed a committed generation.
-	r0, err := store.BeginRebuild(ctx)
+	r0, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestFakeStoreRebuildDiscardThenCommitErrorsAndLeavesTheLiveStoreIntact(t *t
 	}
 	want := []string{"claude:live"}
 
-	r1, err := store.BeginRebuild(ctx)
+	r1, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestFakeStoreRebuildPutAfterCommitDoesNotAliasIntoTheLiveStore(t *testing.T
 	ctx := context.Background()
 	store := NewCanonicalStore()
 
-	r, err := store.BeginRebuild(ctx)
+	r, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestFakeStoreRebuildPutRejectsInvalidSessionDoc(t *testing.T) {
 	ctx := context.Background()
 	store := NewCanonicalStore()
 
-	r, err := store.BeginRebuild(ctx)
+	r, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestFakeStoreRebuildCommitAfterFailedPutRefusesToSwap(t *testing.T) {
 	store := NewCanonicalStore()
 
 	// Seed a committed generation.
-	r0, err := store.BeginRebuild(ctx)
+	r0, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestFakeStoreRebuildCommitAfterFailedPutRefusesToSwap(t *testing.T) {
 	// A lenient caller that treats a Put failure as a counted-not-fatal
 	// skip and proceeds to Commit anyway must still be refused: Commit
 	// must not swap in a generation known to be missing a doc.
-	r1, err := store.BeginRebuild(ctx)
+	r1, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestFakeStoreRebuildCommitAfterRejectedDocRefusesToSwap(t *testing.T) {
 	ctx := context.Background()
 	store := NewCanonicalStore()
 
-	r0, err := store.BeginRebuild(ctx)
+	r0, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -324,7 +324,7 @@ func TestFakeStoreRebuildCommitAfterRejectedDocRefusesToSwap(t *testing.T) {
 	}
 	want := []string{"claude:live"}
 
-	r1, err := store.BeginRebuild(ctx)
+	r1, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -356,12 +356,12 @@ func TestFakeStoreRebuildAndStoreRejectCancelledContext(t *testing.T) {
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if _, err := store.BeginRebuild(cancelled); !errors.Is(err, context.Canceled) {
+	if _, err := store.BeginRebuild(cancelled, nil); !errors.Is(err, context.Canceled) {
 		t.Errorf("BeginRebuild(cancelled): got %v, want errors.Is(_, context.Canceled)", err)
 	}
 
 	liveCtx := context.Background()
-	r, err := store.BeginRebuild(liveCtx)
+	r, err := store.BeginRebuild(liveCtx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -381,7 +381,7 @@ func TestFakeStoreRebuildAndStoreRejectCancelledContext(t *testing.T) {
 	// Commit's own ctx.Err() check, independent of firstErr: a fresh
 	// rebuild with no failed Put yet, committed with an already-cancelled
 	// context, must still be rejected.
-	r2, err := store.BeginRebuild(liveCtx)
+	r2, err := store.BeginRebuild(liveCtx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}

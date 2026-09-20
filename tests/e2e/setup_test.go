@@ -12,15 +12,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mattjmcnaughton/agent-logs-extractor/internal/testing/logfixture"
+	"github.com/mattjmcnaughton/agent-logs-extractor/internal/testing/testlogs"
 )
 
 // claudeScratchpadProject is the single-turn fixture's project directory
-// name under logfixture.ClaudeProjectsDir() — logfixture.go exports named
+// name under testlogs.ClaudeProjectsDir(s.t) — testlogs.go exports named
 // constants for the sidechain and tool-error projects
 // (ClaudeSidechainProject / ClaudeToolErrorProject) but not this one, so
 // it is named here instead of repeating the literal across test files.
-const claudeScratchpadProject = "-tmp-claude-0--home-user-94ba8eae-3476-51cf-a4d4-b0b5339db735-scratchpad-fixture-project"
+const claudeScratchpadProject = "-home-user-demo"
 
 // sandbox is the per-scenario clean slate docs/acceptance.md §1.4
 // describes: an isolated home directory standing in for both $HOME and
@@ -145,13 +145,13 @@ func (s *sandbox) claudeProjectsDir() string {
 }
 
 // seedClaude copies each named fixture project directory (from
-// logfixture.ClaudeProjectsDir()) into this sandbox's ~/.claude/projects/,
+// testlogs.ClaudeProjectsDir(s.t)) into this sandbox's ~/.claude/projects/,
 // so a sync against the sandbox's default (or --claude-path-overridden)
 // root sees exactly those sessions.
 func (s *sandbox) seedClaude(projects ...string) {
 	s.t.Helper()
 	for _, p := range projects {
-		src := filepath.Join(logfixture.ClaudeProjectsDir(), p)
+		src := filepath.Join(testlogs.ClaudeProjectsDir(s.t), p)
 		dst := filepath.Join(s.claudeProjectsDir(), p)
 		copyTree(s.t, src, dst)
 	}
@@ -160,12 +160,12 @@ func (s *sandbox) seedClaude(projects ...string) {
 // seedFullClaudeTree seeds every project directory in the committed Claude
 // fixture (the same tree sync_integration_test.go and duckdbcli's
 // integration tier read directly): 3 sessions, 15 messages, 4 tool calls,
-// 23 records skipped (docs/acceptance.md §1.3 pins these numbers).
+// 4 records skipped (docs/acceptance.md §1.3 pins these numbers).
 func (s *sandbox) seedFullClaudeTree() {
 	s.t.Helper()
-	entries, err := os.ReadDir(logfixture.ClaudeProjectsDir())
+	entries, err := os.ReadDir(testlogs.ClaudeProjectsDir(s.t))
 	if err != nil {
-		s.t.Fatalf("reading %s: %v", logfixture.ClaudeProjectsDir(), err)
+		s.t.Fatalf("reading %s: %v", testlogs.ClaudeProjectsDir(s.t), err)
 	}
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -233,8 +233,8 @@ func hasExecutable(dir, name string) bool {
 }
 
 // copyTree recursively copies src to dst, so a test can seed a mutable
-// working copy of a committed fixture without ever writing into
-// internal/testing/logfixture/ itself.
+// working copy of a synthetic example without ever writing into
+// internal/testing/testlogs/ itself.
 func copyTree(t *testing.T, src, dst string) {
 	t.Helper()
 	err := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
@@ -261,4 +261,9 @@ func copyTree(t *testing.T, src, dst string) {
 	if err != nil {
 		t.Fatalf("copying %s to %s: %v", src, dst, err)
 	}
+}
+
+func (s *sandbox) seedCodex() {
+	s.t.Helper()
+	copyTree(s.t, testlogs.CodexRoot(s.t), filepath.Join(s.home, ".codex"))
 }

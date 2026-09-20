@@ -19,12 +19,12 @@ import (
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/model"
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/sync"
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/ports"
-	"github.com/mattjmcnaughton/agent-logs-extractor/internal/testing/logfixture"
+	"github.com/mattjmcnaughton/agent-logs-extractor/internal/testing/testlogs"
 )
 
 // These tests exercise the Sync use case against the real claudesource and
 // jsonlstore adapters, on a real filesystem (afero.NewOsFs()), reading the
-// committed vendor log fixtures. They are the use-case-level counterpart to
+// generated synthetic vendor examples. They are the use-case-level counterpart to
 // claudesource's golden tests and jsonlstore's own integration tier: no
 // fake in this file, so a mismatch between what claudesource actually
 // produces and what jsonlstore actually accepts cannot hide behind either
@@ -95,7 +95,7 @@ func TestSyncOverTheClaudeFixtureTree(t *testing.T) {
 	s, _ := newSync(t, storeRoot)
 
 	summary, err := s.Run(context.Background(), sync.Request{Sources: []sync.SourceRequest{
-		{Vendor: model.VendorClaude, Root: logfixture.ClaudeRoot()},
+		{Vendor: model.VendorClaude, Root: testlogs.ClaudeRoot(t)},
 	}})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -106,7 +106,7 @@ func TestSyncOverTheClaudeFixtureTree(t *testing.T) {
 		Sessions:  3,
 		Messages:  15,
 		ToolCalls: 4,
-		Skipped:   model.SkipCounts{model.SkipBookkeeping: 23},
+		Skipped:   model.SkipCounts{model.SkipBookkeeping: 4},
 	}}}
 	if !reflect.DeepEqual(summary, want) {
 		t.Fatalf("summary = %+v, want %+v", summary, want)
@@ -114,9 +114,9 @@ func TestSyncOverTheClaudeFixtureTree(t *testing.T) {
 
 	files := sessionsFiles(t, storeRoot)
 	wantFiles := []string{
-		filepath.Join(storeRoot, "sessions", "claude", "40def079-df87-46bd-ac03-5ffbf1a74ca2.json"),
-		filepath.Join(storeRoot, "sessions", "claude", "8f1900e4-5b83-46c2-a244-2811996f87c3.json"),
-		filepath.Join(storeRoot, "sessions", "claude", "94ba8eae-3476-51cf-a4d4-b0b5339db735.json"),
+		filepath.Join(storeRoot, "sessions", "claude", "parent.json"),
+		filepath.Join(storeRoot, "sessions", "claude", "failure.json"),
+		filepath.Join(storeRoot, "sessions", "claude", "single.json"),
 	}
 	gotSet := map[string]bool{}
 	for _, f := range files {
@@ -136,9 +136,9 @@ func TestSyncOverTheClaudeFixtureTree(t *testing.T) {
 	}
 
 	wantCounts := map[string][2]int{
-		"40def079-df87-46bd-ac03-5ffbf1a74ca2.json": {7, 2},
-		"8f1900e4-5b83-46c2-a244-2811996f87c3.json": {4, 1},
-		"94ba8eae-3476-51cf-a4d4-b0b5339db735.json": {4, 1},
+		"parent.json":  {7, 2},
+		"failure.json": {4, 1},
+		"single.json":  {4, 1},
 	}
 	for _, f := range wantFiles {
 		doc := readSessionDoc(t, f)
@@ -163,7 +163,7 @@ func TestSyncIsIdempotent(t *testing.T) {
 	storeRoot := t.TempDir()
 	s, _ := newSync(t, storeRoot)
 	ctx := context.Background()
-	req := sync.Request{Sources: []sync.SourceRequest{{Vendor: model.VendorClaude, Root: logfixture.ClaudeRoot()}}}
+	req := sync.Request{Sources: []sync.SourceRequest{{Vendor: model.VendorClaude, Root: testlogs.ClaudeRoot(t)}}}
 
 	summary1, err := s.Run(ctx, req)
 	if err != nil {
@@ -228,7 +228,7 @@ func TestSyncOverThePathologicalFixtureTree(t *testing.T) {
 	s, _ := newSync(t, storeRoot)
 
 	summary, err := s.Run(context.Background(), sync.Request{Sources: []sync.SourceRequest{
-		{Vendor: model.VendorClaude, Root: logfixture.PathologicalClaudeRoot()},
+		{Vendor: model.VendorClaude, Root: testlogs.PathologicalClaudeRoot(t)},
 	}})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -240,7 +240,7 @@ func TestSyncOverThePathologicalFixtureTree(t *testing.T) {
 		Messages:  4,
 		ToolCalls: 1,
 		Skipped: model.SkipCounts{
-			model.SkipBookkeeping:       12,
+			model.SkipBookkeeping:       3,
 			model.SkipMalformedLine:     1,
 			model.SkipUnknownRecordType: 1,
 		},
@@ -248,12 +248,12 @@ func TestSyncOverThePathologicalFixtureTree(t *testing.T) {
 	if !reflect.DeepEqual(summary, want) {
 		t.Fatalf("summary = %+v, want %+v", summary, want)
 	}
-	if got := summary.Vendors[0].TotalSkipped(); got != 14 {
-		t.Errorf("TotalSkipped() = %d, want 14", got)
+	if got := summary.Vendors[0].TotalSkipped(); got != 5 {
+		t.Errorf("TotalSkipped() = %d, want 5", got)
 	}
 
 	files := sessionsFiles(t, storeRoot)
-	wantFile := filepath.Join(storeRoot, "sessions", "claude", "94ba8eae-3476-51cf-a4d4-b0b5339db735.json")
+	wantFile := filepath.Join(storeRoot, "sessions", "claude", "single.json")
 	if len(files) != 1 || files[0] != wantFile {
 		t.Fatalf("store files = %v, want exactly [%s]", files, wantFile)
 	}
@@ -317,14 +317,14 @@ func TestSyncPreviousGenerationSurvivesAVendorRejectedBeforeRebuild(t *testing.T
 	ctx := context.Background()
 
 	if _, err := s.Run(ctx, sync.Request{Sources: []sync.SourceRequest{
-		{Vendor: model.VendorClaude, Root: logfixture.ClaudeRoot()},
+		{Vendor: model.VendorClaude, Root: testlogs.ClaudeRoot(t)},
 	}}); err != nil {
 		t.Fatalf("first Run: %v", err)
 	}
 	before := readFileMap(t, filepath.Join(storeRoot, "sessions"))
 
 	_, err := s.Run(ctx, sync.Request{Sources: []sync.SourceRequest{
-		{Vendor: model.VendorCodex, Root: logfixture.CodexRoot()},
+		{Vendor: model.VendorCodex, Root: testlogs.CodexRoot(t)},
 	}})
 	if err == nil {
 		t.Fatal("second Run: want an error (codex has no registered source), got nil")
@@ -339,64 +339,37 @@ func TestSyncPreviousGenerationSurvivesAVendorRejectedBeforeRebuild(t *testing.T
 	}
 }
 
-// TestSyncPreviousGenerationSurvivesAFailedCommit proves the deferred
-// r.Discard() at sync.go's Run: a failure that occurs AFTER BeginRebuild —
-// every doc already Put into the staging tree — must still clean up the
-// staging directory and must never touch the previously committed
-// generation. It corrupts "sessions" into a regular file so
-// jsonlstore.rebuild.statLiveIsDir errors inside Commit, which is the
-// earliest point in the real adapter where a post-BeginRebuild failure can
-// be forced deterministically without reaching into unexported state.
+// rejectSwapFS fails the staged-generation rename after all parsing/writes.
+// The rollback rename remains available, exercising Sync's deferred Discard.
+type rejectSwapFS struct{ afero.Fs }
+
+func (f rejectSwapFS) Rename(old, new string) error {
+	if strings.HasPrefix(filepath.Base(old), ".staging-") && filepath.Base(new) == "sessions" {
+		return os.ErrPermission
+	}
+	return f.Fs.Rename(old, new)
+}
+
 func TestSyncPreviousGenerationSurvivesAFailedCommit(t *testing.T) {
 	storeRoot := t.TempDir()
 	s, _ := newSync(t, storeRoot)
 	ctx := context.Background()
-
-	if _, err := s.Run(ctx, sync.Request{Sources: []sync.SourceRequest{
-		{Vendor: model.VendorClaude, Root: logfixture.ClaudeRoot()},
-	}}); err != nil {
-		t.Fatalf("first Run: %v", err)
+	req := sync.Request{Sources: []sync.SourceRequest{{Vendor: model.VendorClaude, Root: testlogs.ClaudeRoot(t)}}}
+	if _, err := s.Run(ctx, req); err != nil {
+		t.Fatal(err)
 	}
-
-	sessionsPath := filepath.Join(storeRoot, "sessions")
-	if err := os.RemoveAll(sessionsPath); err != nil {
-		t.Fatalf("removing %s: %v", sessionsPath, err)
+	before := readFileMap(t, filepath.Join(storeRoot, "sessions"))
+	failingStore := jsonlstore.New(rejectSwapFS{afero.NewOsFs()}, storeRoot, nil)
+	s = sync.New([]ports.ConversationSource{claudesource.New(nil)}, failingStore, nil)
+	_, err := s.Run(ctx, req)
+	if err == nil || !strings.Contains(err.Error(), "committing store rebuild") {
+		t.Fatalf("want Commit failure, got %v", err)
 	}
-	if err := os.WriteFile(sessionsPath, []byte("x"), 0o600); err != nil {
-		t.Fatalf("writing %s: %v", sessionsPath, err)
-	}
-
-	_, err := s.Run(ctx, sync.Request{Sources: []sync.SourceRequest{
-		{Vendor: model.VendorClaude, Root: logfixture.ClaudeRoot()},
-	}})
-	if err == nil {
-		t.Fatal("second Run: want an error (sessions is a regular file, not a directory), got nil")
-	}
-	// Pin *where* the failure happens, not just that one happened. This test
-	// only covers the deferred Discard if the run gets past BeginRebuild and
-	// every Put and then fails in Commit. If a future jsonlstore change moved
-	// the not-a-directory check into BeginRebuild, an err-is-non-nil-only
-	// assertion would still pass while silently covering nothing — which is
-	// exactly how this test's predecessor was vacuous.
-	if !strings.Contains(err.Error(), "committing store rebuild") {
-		t.Fatalf("second Run: want the failure to come from Commit (so the deferred Discard is on the unwind path), got: %v", err)
-	}
-
-	// The killer assertion: without the deferred r.Discard() in sync.go's
-	// Run, the staging directory this run wrote every doc into survives as
-	// a leftover, because nothing else in the failure path removes it.
 	if got := leftovers(t, storeRoot); len(got) != 0 {
-		t.Errorf("leftover staging/trash/orphan directories after a failed commit: %v (defer r.Discard() should have cleaned up the staging tree)", got)
+		t.Fatalf("deferred Discard left %v", got)
 	}
-
-	// statLiveIsDir errors before either rename in Commit runs, so the
-	// corrupted "sessions" regular file must be exactly as this test left
-	// it: proof the failed commit never touched it.
-	got, err := os.ReadFile(sessionsPath)
-	if err != nil {
-		t.Fatalf("reading %s: %v", sessionsPath, err)
-	}
-	if string(got) != "x" {
-		t.Errorf("sessions path changed during a failed commit: %q, want unchanged %q", got, "x")
+	after := readFileMap(t, filepath.Join(storeRoot, "sessions"))
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("failed commit changed previous generation")
 	}
 }

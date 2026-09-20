@@ -160,7 +160,7 @@ func hasPrefixEntry(names []string, prefix string) bool {
 func commitDocs(t *testing.T, store *Store, docs ...model.SessionDoc) {
 	t.Helper()
 	ctx := context.Background()
-	r, err := store.BeginRebuild(ctx)
+	r, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestPutSameSessionIDReplaces(t *testing.T) {
 	store := New(fsys, "/store", nil)
 	ctx := context.Background()
 
-	r, err := store.BeginRebuild(ctx)
+	r, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -318,7 +318,7 @@ func TestDiscardLeavesPreviousStoreIntact(t *testing.T) {
 	before := snapshotBytes(t, fsys, filepath.Join(store.Root(), sessionsDir))
 
 	ctx := context.Background()
-	r, err := store.BeginRebuild(ctx)
+	r, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestDiscardAfterCommitIsNoOp(t *testing.T) {
 	store := New(fsys, "/store", nil)
 	ctx := context.Background()
 
-	r, err := store.BeginRebuild(ctx)
+	r, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestDiscardTwice(t *testing.T) {
 	store := New(fsys, "/store", nil)
 	ctx := context.Background()
 
-	r, err := store.BeginRebuild(ctx)
+	r, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -388,7 +388,7 @@ func TestDeferDiscardAfterCommitIsSafe(t *testing.T) {
 	ctx := context.Background()
 
 	func() {
-		r, err := store.BeginRebuild(ctx)
+		r, err := store.BeginRebuild(ctx, nil)
 		if err != nil {
 			t.Fatalf("BeginRebuild: %v", err)
 		}
@@ -415,7 +415,7 @@ func TestPutAndCommitAfterFinish(t *testing.T) {
 	store := New(fsys, "/store", nil)
 	ctx := context.Background()
 
-	r, err := store.BeginRebuild(ctx)
+	r, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -445,7 +445,7 @@ func TestPutRejectsZeroDocAndNonNamespacedID(t *testing.T) {
 	store := New(fsys, "/store", nil)
 	ctx := context.Background()
 
-	r, err := store.BeginRebuild(ctx)
+	r, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -491,7 +491,7 @@ func TestFsFailureMidWriteLeavesPreviousStoreIntact(t *testing.T) {
 	failStore := New(failing, "/store", nil)
 
 	ctx := context.Background()
-	r, err := failStore.BeginRebuild(ctx)
+	r, err := failStore.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -527,7 +527,7 @@ func TestMarshalFailureMidWriteLeavesPreviousStoreIntact(t *testing.T) {
 	before := snapshotBytes(t, fsys, filepath.Join(store.Root(), sessionsDir))
 
 	ctx := context.Background()
-	r, err := store.BeginRebuild(ctx)
+	r, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -568,7 +568,7 @@ func TestCommitAfterFailedPutRefusesToSwap(t *testing.T) {
 	before := snapshotBytes(t, fsys, filepath.Join(store.Root(), sessionsDir))
 
 	ctx := context.Background()
-	r, err := store.BeginRebuild(ctx)
+	r, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -605,7 +605,7 @@ func TestCommitAfterRejectedDocRefusesToSwap(t *testing.T) {
 	before := snapshotBytes(t, fsys, filepath.Join(store.Root(), sessionsDir))
 
 	ctx := context.Background()
-	r, err := store.BeginRebuild(ctx)
+	r, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -647,7 +647,7 @@ func TestPutOnCancelledContextPoisonsCommit(t *testing.T) {
 	before := snapshotBytes(t, fsys, filepath.Join(store.Root(), sessionsDir))
 
 	liveCtx := context.Background()
-	r, err := store.BeginRebuild(liveCtx)
+	r, err := store.BeginRebuild(liveCtx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -693,7 +693,7 @@ func TestCommitRenameFailureRollsBack(t *testing.T) {
 	failStore := New(failing, "/store", nil)
 
 	ctx := context.Background()
-	r, err := failStore.BeginRebuild(ctx)
+	r, err := failStore.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -761,7 +761,7 @@ func TestCommitRollbackFailureRelocatesToOrphanPrefix(t *testing.T) {
 	failStore := New(failing, "/store", nil)
 
 	ctx := context.Background()
-	r, err := failStore.BeginRebuild(ctx)
+	r, err := failStore.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -796,7 +796,7 @@ func TestCommitRollbackFailureRelocatesToOrphanPrefix(t *testing.T) {
 
 	// The orphan directory must survive a subsequent BeginRebuild's sweep —
 	// that is the entire point of relocating out of the trash prefix.
-	r2, err := plainStore.BeginRebuild(ctx)
+	r2, err := plainStore.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild after orphaning: %v", err)
 	}
@@ -849,7 +849,7 @@ func TestCommitMovesPreviousGenerationAsideBeforeAttemptingTheSwap(t *testing.T)
 	failStore := New(failing, "/store", nil)
 
 	ctx := context.Background()
-	r, err := failStore.BeginRebuild(ctx)
+	r, err := failStore.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -896,7 +896,7 @@ func TestLeftoverStagingAndTrashSweptOnBeginRebuild(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	r, err := store.BeginRebuild(ctx)
+	r, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -930,7 +930,7 @@ func TestBeginRebuildCreatesMissingRoot(t *testing.T) {
 		t.Fatalf("test setup: root should not exist yet")
 	}
 
-	r, err := store.BeginRebuild(context.Background())
+	r, err := store.BeginRebuild(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -950,7 +950,7 @@ func TestCommitWithNoPutsYieldsEmptySessionsDir(t *testing.T) {
 	store := New(fsys, "/store", nil)
 	ctx := context.Background()
 
-	r, err := store.BeginRebuild(ctx)
+	r, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -982,11 +982,11 @@ func TestCancelledContext(t *testing.T) {
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if _, err := store.BeginRebuild(cancelled); !errors.Is(err, context.Canceled) {
+	if _, err := store.BeginRebuild(cancelled, nil); !errors.Is(err, context.Canceled) {
 		t.Errorf("BeginRebuild(cancelled): got %v, want errors.Is(_, context.Canceled)", err)
 	}
 
-	r, err := store.BeginRebuild(context.Background())
+	r, err := store.BeginRebuild(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -1018,7 +1018,7 @@ func TestCommitFailsWhenSessionsIsNotADirectory(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	r, err := store.BeginRebuild(ctx)
+	r, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}

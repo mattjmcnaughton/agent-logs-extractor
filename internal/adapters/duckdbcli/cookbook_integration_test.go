@@ -16,23 +16,19 @@ import (
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/model"
 )
 
-// fixtureOldestRFC3339 is the earliest timestamp across the committed
-// Claude fixtures (fixture-project's opening user message,
-// internal/testing/logfixture/claude/projects/-tmp-.../94ba8eae-....jsonl).
-// Verified directly against a real store built by `sync` over the
-// fixtures (see the ticket's report for the cross-check).
-const fixtureOldestRFC3339 = "2026-08-12T18:19:09.55Z"
+// fixtureOldestRFC3339 is the earliest timestamp in the invented Claude examples.
+const fixtureOldestRFC3339 = "2020-01-01T00:00:00Z"
 
 // rebaseStoreTimestamps shifts every timestamp in every session doc under
 // <storeRoot>/sessions/claude/ by one uniform delta (D11): DuckDB has no
 // clock override, so the acceptance test shifts the data instead of the
 // query. The 25-hour anchor (now - 25h vs. the oldest fixture timestamp)
-// is deliberate: the fixture span is under 17h, so fixture-project lands
+// is deliberate: the fixture span is under 17h, so demo lands
 // outside the cookbook's `INTERVAL 1 DAY` window after rebasing while the
 // other two sessions land inside it — the time predicate gets exercised in
 // both directions, not just trivially satisfied or trivially empty. This
 // touches only the temp store under storeRoot — never
-// internal/testing/logfixture/, which must stay verbatim ground truth.
+// the generated source records, which this test leaves unchanged.
 func rebaseStoreTimestamps(t *testing.T, storeRoot string) time.Duration {
 	t.Helper()
 
@@ -202,18 +198,15 @@ func TestCookbookQueries(t *testing.T) {
 		}
 	})
 
-	t.Run("Q1 substituted fixture-sidechain returns 2 rows in order", func(t *testing.T) {
-		q := strings.Replace(CookbookQuery1, "'fetch-context'", "'fixture-sidechain'", 1)
+	t.Run("Q1 substituted sidechain returns 2 rows in order", func(t *testing.T) {
+		q := strings.Replace(CookbookQuery1, "'fetch-context'", "'sidechain'", 1)
 		rows := queryJSON(t, duckdbBin, out, q)
 		if len(rows) != 2 {
 			t.Fatalf("got %d rows, want 2: %v", len(rows), rows)
 		}
 
-		wantTimes := []string{"2026-08-13T11:16:42.55Z", "2026-08-13T11:16:45.684Z"}
-		wantTexts := []string{
-			"Use the Task tool to launch one general-purpose subagent whose prompt is: run the bash command 'echo hello from subagent' and report its output. After the subagent finishes, reply with exactly: done",
-			"Run the bash command 'echo hello from subagent' and report its output.",
-		}
+		wantTimes := []string{"2020-01-01T12:00:00Z", "2020-01-01T12:00:03Z"}
+		wantTexts := []string{"parent prompt", "child prompt"}
 		for i, row := range rows {
 			assertRebasedTime(t, row["created_at"], wantTimes[i], delta)
 			if got := fmt.Sprint(row["text"]); got != wantTexts[i] {
@@ -222,11 +215,11 @@ func TestCookbookQueries(t *testing.T) {
 		}
 	})
 
-	t.Run("Q1 substituted fixture-project returns 0 rows (proves the time predicate filters)", func(t *testing.T) {
-		q := strings.Replace(CookbookQuery1, "'fetch-context'", "'fixture-project'", 1)
+	t.Run("Q1 substituted demo returns 0 rows (proves the time predicate filters)", func(t *testing.T) {
+		q := strings.Replace(CookbookQuery1, "'fetch-context'", "'demo'", 1)
 		rows := queryJSON(t, duckdbBin, out, q)
 		if len(rows) != 0 {
-			t.Errorf("got %d rows, want 0 (fixture-project's only user message rebases to 25h ago, an hour outside the INTERVAL 1 DAY window — deliberately not exactly on the boundary, so this stays robust rather than flaky): %v", len(rows), rows)
+			t.Errorf("got %d rows, want 0 (demo's only user message rebases to 25h ago, an hour outside the INTERVAL 1 DAY window — deliberately not exactly on the boundary, so this stays robust rather than flaky): %v", len(rows), rows)
 		}
 	})
 
@@ -247,11 +240,11 @@ func TestCookbookQueries(t *testing.T) {
 			return fmt.Sprint(rows[i]["created_at"]) < fmt.Sprint(rows[j]["created_at"])
 		})
 
-		wantProjects := []string{"fixture-project", "fixture-sidechain"}
-		wantTimes := []string{"2026-08-12T18:19:11.768Z", "2026-08-13T11:16:47.606Z"}
+		wantProjects := []string{"demo", "sidechain"}
+		wantTimes := []string{"2020-01-01T00:00:02Z", "2020-01-01T12:00:04Z"}
 		wantArgs := []map[string]any{
-			{"command": "echo hello fixture", "description": "Echo test string"},
-			{"command": "echo hello from subagent", "description": "Echo test message"},
+			{"command": "echo hello fixture", "description": "Example command"},
+			{"command": "echo hello from subagent", "description": "Example child command"},
 		}
 		for i, row := range rows {
 			if got := fmt.Sprint(row["vendor"]); got != "claude" {
@@ -274,8 +267,8 @@ func TestCookbookQueries(t *testing.T) {
 			return fmt.Sprint(rows[i]["project_name"]) < fmt.Sprint(rows[j]["project_name"])
 		})
 
-		wantProjects := []string{"fixture-project", "fixture-sidechain", "fixture-tool-error"}
-		wantLastActive := []string{"2026-08-12T18:19:12.755Z", "2026-08-13T11:16:49.806Z", "2026-08-13T11:17:29.81Z"}
+		wantProjects := []string{"demo", "sidechain", "tool-error"}
+		wantLastActive := []string{"2020-01-01T00:00:04Z", "2020-01-01T12:00:08Z", "2020-01-01T13:00:04Z"}
 		for i, row := range rows {
 			if got := fmt.Sprint(row["project_name"]); got != wantProjects[i] {
 				t.Errorf("row %d project_name = %q, want %q", i, got, wantProjects[i])

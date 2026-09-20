@@ -34,10 +34,6 @@ run *args:
 tidy:
     go mod tidy
 
-# Scrub a real vendor session tree into a committable fixture
-scrub-fixture *args:
-    go run ./internal/tools/scrubfixture {{args}}
-
 # Build the containerized duckdb test image and run the integration tier
 # inside it, network-isolated at run time (Dockerfile.duckdb). Requires a
 # working docker daemon; not part of `gate`/`gate-expensive` because it
@@ -49,24 +45,11 @@ test-integration-container:
     docker build -f Dockerfile.duckdb -t agent-logs-extractor-duckdb-test .
     docker run --rm --network none agent-logs-extractor-duckdb-test
 
-# Run the opt-in contract tier: asserts structural invariants plus
-# vendor-format-drift observations
-# (internal/adapters/claudesource/claudesource_contract_test.go) against
-# whatever ~/.claude ALX_CONTRACT_CLAUDE_PATH (test-only, see
-# docs/development.md) points at. Never gated (see the note above `gate`
-# below) — it needs real session history to say anything, which CI has none
-# of, and a contributor with no Claude Code history of their own must not
-# see this fail. -v -count=1 so a skip's reason (or a real run's t.Log
-# report) is never hidden by Go's test cache.
-#
-# DO NOT run this recipe bare: with no ALX_CONTRACT_CLAUDE_PATH set, the
-# test now SKIPs outright rather than defaulting to this sandbox's own
-# ~/.claude (its harness transcript, not a developer's history, and not
-# ours to read). Always set it explicitly:
-#   ALX_CONTRACT_CLAUDE_PATH=$(mktemp -d) just test-contract                             # skip path
-#   ALX_CONTRACT_CLAUDE_PATH=$PWD/internal/testing/logfixture/claude just test-contract   # found-logs path
+# Local-only, opt-in live format checks. Explicit test-only paths are required.
+# Never run in CI or gates; no HOME fallback, exports, or source-content reports.
+# See docs/log-contracts.md and the validate-log-contracts skill.
 test-contract:
-    go test -tags=contract -v -count=1 ./...
+    go test -tags=contract -run 'Test(Claude|Codex)SourceContractAgainstLiveLogs' -v -count=1 ./internal/adapters/claudesource ./internal/adapters/codexsource
 
 # Run the black-box e2e suite (tests/e2e/, //go:build e2e) against a
 # locally-built binary. $ALXBIN, if set, names a pre-built binary to reuse;

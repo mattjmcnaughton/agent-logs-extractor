@@ -21,7 +21,7 @@ import (
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/model"
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/sync"
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/ports"
-	"github.com/mattjmcnaughton/agent-logs-extractor/internal/testing/logfixture"
+	"github.com/mattjmcnaughton/agent-logs-extractor/internal/testing/testlogs"
 )
 
 // These tests exercise the real duckdb CLI, so they only run when it is on
@@ -68,7 +68,7 @@ func syncSources(t *testing.T, storeRoot string, sources []sync.SourceRequest) s
 
 func syncClaudeFixtures(t *testing.T, storeRoot string) sync.Summary {
 	t.Helper()
-	return syncSources(t, storeRoot, []sync.SourceRequest{{Vendor: model.VendorClaude, Root: logfixture.ClaudeRoot()}})
+	return syncSources(t, storeRoot, []sync.SourceRequest{{Vendor: model.VendorClaude, Root: testlogs.ClaudeRoot(t)}})
 }
 
 // exportStore runs the real Adapter.Export against storeRoot, writing to
@@ -183,7 +183,7 @@ func TestExportAbsentSessionsDirIsNotAnError(t *testing.T) {
 
 // TestExportFixtureStoreRowCounts pins the export's row counts against
 // sync's own printed summary for the same fixtures ("claude: 3 sessions,
-// 15 messages, 4 tool calls, 23 records skipped" —
+// 15 messages, 4 tool calls, 4 records skipped" —
 // internal/adapters/cli/sync_integration_test.go), so the two can never
 // silently drift apart.
 func TestExportFixtureStoreRowCounts(t *testing.T) {
@@ -377,7 +377,7 @@ func TestExportFailsAndLeavesThePreviousOutputIntact(t *testing.T) {
 func TestExportHandlesThePathologicalFixtureStore(t *testing.T) {
 	duckdbBin := requireDuckDB(t)
 	storeRoot := t.TempDir()
-	summary := syncSources(t, storeRoot, []sync.SourceRequest{{Vendor: model.VendorClaude, Root: logfixture.PathologicalClaudeRoot()}})
+	summary := syncSources(t, storeRoot, []sync.SourceRequest{{Vendor: model.VendorClaude, Root: testlogs.PathologicalClaudeRoot(t)}})
 
 	wantSessions := 0
 	for _, v := range summary.Vendors {
@@ -394,5 +394,43 @@ func TestExportHandlesThePathologicalFixtureStore(t *testing.T) {
 
 	if got := countTable(t, duckdbBin, out, "sessions"); got != wantSessions {
 		t.Errorf("sessions count = %d, want %d (matching sync's own summary over the pathological fixtures)", got, wantSessions)
+	}
+}
+
+func TestExportVendorNamespacesAreOpenAndIndependent(t *testing.T) {
+	bin := requireDuckDB(t)
+	root := t.TempDir()
+	ctx := context.Background()
+	store := jsonlstore.New(afero.NewOsFs(), root, nil)
+	r, err := store.BeginRebuild(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Discard()
+	for _, v := range []model.Vendor{"claude", "codex", "testvendor"} {
+		sid := string(v) + ":same"
+		mid := sid + ":message:same"
+		d := model.SessionDoc{Session: model.Session{Vendor: v, SessionID: sid, ProjectName: "shared"},
+			Messages:  []model.Message{{MessageID: mid, SessionID: sid, Role: model.RoleAssistant}},
+			ToolCalls: []model.ToolCall{{ToolCallID: sid + ":tool:same", SessionID: sid, MessageID: mid, ToolName: "read", Status: model.StatusPending}}}
+		if err := r.Put(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "vendors.duckdb")
+	if err := exportStore(t, root, out); err != nil {
+		t.Fatal(err)
+	}
+	rows := queryJSON(t, bin, out, "SELECT t.vendor, count(*) AS n FROM tool_calls t JOIN messages m ON t.message_id=m.message_id AND t.session_id=m.session_id AND t.vendor=m.vendor GROUP BY t.vendor ORDER BY t.vendor")
+	if len(rows) != 3 {
+		t.Fatal(rows)
+	}
+	for i, v := range []string{"claude", "codex", "testvendor"} {
+		if rows[i]["vendor"] != v || asInt(t, rows[i]["n"]) != 1 {
+			t.Fatal(rows)
+		}
 	}
 }

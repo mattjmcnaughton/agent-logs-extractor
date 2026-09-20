@@ -8,6 +8,9 @@ dist/
 # Environment
 .env
 
+# Local agent workspace
+.agentic/
+
 # Go
 *.exe
 *.test
