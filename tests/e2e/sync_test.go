@@ -3,19 +3,24 @@
 package e2e
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/mattjmcnaughton/agent-logs-extractor/internal/testing/logfixture"
+	"github.com/mattjmcnaughton/agent-logs-extractor/internal/testing/testlogs"
 )
 
 // fixtureSummary is the exact stdout AC-SYNC-01/02/05 pin (docs/acceptance.md §1.3).
-const fixtureSummary = "claude: 3 sessions, 15 messages, 4 tool calls, 23 records skipped\n"
+const claudeSummary = "claude: 3 sessions, 15 messages, 4 tool calls, 4 records skipped\n"
+const codexZeroSummary = "codex: 0 sessions, 0 messages, 0 tool calls, 0 records skipped\n"
+const fixtureSummary = claudeSummary + codexZeroSummary
+const codexSummary = "codex: 3 sessions, 10 messages, 4 tool calls, 7 records skipped\n"
 
 // AC-SYNC-01
 func TestAC_SYNC_01_FixtureTreeSummary(t *testing.T) {
 	s := newSandbox(t)
-	res := s.run("sync", "--claude-path", logfixture.ClaudeRoot())
+	res := s.run("sync", "--claude-path", testlogs.ClaudeRoot(t))
 	wantCode(t, res, 0)
 	wantStdout(t, res, fixtureSummary)
 
@@ -38,7 +43,7 @@ func TestAC_SYNC_02_BareSyncUsesSandboxHome(t *testing.T) {
 // AC-SYNC-03
 func TestAC_SYNC_03_RerunIsIdempotent(t *testing.T) {
 	s := newSandbox(t)
-	args := []string{"sync", "--claude-path", logfixture.ClaudeRoot()}
+	args := []string{"sync", "--claude-path", testlogs.ClaudeRoot(t), "--codex-path", testlogs.CodexRoot(t)}
 
 	first := s.run(args...)
 	wantCode(t, first, 0)
@@ -59,44 +64,113 @@ func TestAC_SYNC_03_RerunIsIdempotent(t *testing.T) {
 // AC-SYNC-04
 func TestAC_SYNC_04_RerunPicksUpNewSessions(t *testing.T) {
 	s := newSandbox(t)
-	s.seedClaude(logfixture.ClaudeToolErrorProject, claudeScratchpadProject)
+	s.seedClaude(testlogs.ClaudeToolErrorProject, claudeScratchpadProject)
 
 	first := s.run("sync")
 	wantCode(t, first, 0)
-	wantStdout(t, first, "claude: 2 sessions, 8 messages, 2 tool calls, 14 records skipped\n")
+	wantStdout(t, first, "claude: 2 sessions, 8 messages, 2 tool calls, 2 records skipped\n"+codexZeroSummary)
 
-	s.seedClaude(logfixture.ClaudeSidechainProject)
+	s.seedClaude(testlogs.ClaudeSidechainProject)
 	second := s.run("sync")
 	wantCode(t, second, 0)
 	wantStdout(t, second, fixtureSummary)
 }
 
 // AC-SYNC-05
-func TestAC_SYNC_05_VendorClaudeMatchesBareSync(t *testing.T) {
-	bare := newSandbox(t)
-	bare.seedFullClaudeTree()
-	bareRes := bare.run("sync")
-	wantCode(t, bareRes, 0)
-
-	vendored := newSandbox(t)
-	vendored.seedFullClaudeTree()
-	vendoredRes := vendored.run("sync", "--vendor", "claude")
-	wantCode(t, vendoredRes, 0)
-	// A6: pin vendoredRes's own content — without this, two runs that both
-	// printed "" would still satisfy the equality check below.
-	wantStdout(t, vendoredRes, fixtureSummary)
-
-	if vendoredRes.stdout != bareRes.stdout {
-		t.Errorf("sync --vendor claude stdout = %q, want it identical to bare sync's %q", vendoredRes.stdout, bareRes.stdout)
+func TestAC_SYNC_05_SelectedVendorPreservesOthers(t *testing.T) {
+	s := newSandbox(t)
+	s.seedFullClaudeTree()
+	s.seedCodex()
+	wantCode(t, s.run("sync"), 0)
+	claudeDir := filepath.Join(s.storeRoot(), "sessions", "claude")
+	codexDir := filepath.Join(s.storeRoot(), "sessions", "codex")
+	claudeBefore, codexBefore := hashTree(t, claudeDir), hashTree(t, codexDir)
+	res := s.run("sync", "--vendor", "claude")
+	wantCode(t, res, 0)
+	wantStdout(t, res, claudeSummary)
+	if hashTree(t, codexDir) != codexBefore {
+		t.Fatal("Claude refresh changed Codex")
+	}
+	res = s.run("sync", "--vendor", "codex")
+	wantCode(t, res, 0)
+	wantStdout(t, res, codexSummary)
+	if hashTree(t, claudeDir) != claudeBefore {
+		t.Fatal("Codex refresh changed Claude")
+	}
+	if err := os.RemoveAll(filepath.Join(s.home, ".codex")); err != nil {
+		t.Fatal(err)
+	}
+	res = s.run("sync", "--vendor", "codex")
+	wantCode(t, res, 0)
+	wantStdout(t, res, codexZeroSummary)
+	if len(sessionFiles(t, s.storeRoot())) != 3 || hashTree(t, claudeDir) != claudeBefore {
+		t.Fatal("empty Codex refresh lost Claude or kept stale Codex")
 	}
 }
 
 // AC-SYNC-06
-func TestAC_SYNC_06_VendorCodexNotYetAvailable(t *testing.T) {
+func TestAC_SYNC_06_CodexActiveAndArchived(t *testing.T) {
+	for _, override := range []bool{false, true} {
+		s := newSandbox(t)
+		s.seedCodex()
+		args := []string{"sync", "--vendor", "codex"}
+		if override {
+			args = append(args, "--codex-path", testlogs.CodexRoot(t))
+		}
+		res := s.run(args...)
+		wantCode(t, res, 0)
+		wantStdout(t, res, codexSummary)
+		if len(sessionFiles(t, s.storeRoot())) != 3 {
+			t.Fatal("active/archive sessions missing")
+		}
+	}
+}
+
+// Active copies take precedence during the short window where both locations
+// contain the same thread. Exercise the source-to-store boundary through CLI.
+func TestCodexActiveCopyWinsArchivedDuplicate(t *testing.T) {
 	s := newSandbox(t)
+	s.seedCodex()
+	archived, err := filepath.Glob(filepath.Join(s.home, ".codex", "archived_sessions", "*.jsonl"))
+	if err != nil || len(archived) != 1 {
+		t.Fatal(archived, err)
+	}
+	data, err := os.ReadFile(archived[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := filepath.Join(s.home, ".codex", "sessions", filepath.Base(archived[0]))
+	if err := os.WriteFile(active, data, 0600); err != nil {
+		t.Fatal(err)
+	}
 	res := s.run("sync", "--vendor", "codex")
-	wantCode(t, res, 1)
-	wantStderrContains(t, res, `vendor "codex" is not supported by this build yet; available: [claude]`)
+	wantCode(t, res, 0)
+	files := sessionFiles(t, s.storeRoot())
+	if len(files) != 3 {
+		t.Fatal("duplicate counted twice")
+	}
+	found := false
+	for _, p := range files {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			Session struct {
+				SourcePath string `json:"source_path"`
+			} `json:"session"`
+		}
+		if err := json.Unmarshal(b, &doc); err != nil {
+			t.Fatal(err)
+		}
+		if doc.Session.SourcePath == archived[0] {
+			t.Fatal("archive overwrote active copy")
+		}
+		found = found || doc.Session.SourcePath == active
+	}
+	if !found {
+		t.Fatal("active copy missing")
+	}
 }
 
 // AC-SYNC-07

@@ -16,12 +16,9 @@ agent-logs-extractor is a Go CLI built with strict hexagonal
   imports every concrete adapter: it reads the environment, constructs
   adapters, injects them into use cases, and hands those to the cobra root.
 
-The hexagon's outside edge is the Claude Code log tree, the local
-filesystem, and the `duckdb` CLI — three edges, three ports
-(`ports.ConversationSource`, `ports.CanonicalStore`, `ports.Exporter`).
-Codex is a fourth edge the ports already anticipate (`model.VendorCodex`
-exists; `ports.ConversationSource` is vendor-agnostic) but no `codexsource`
-adapter has landed yet — see "Codex is not implemented" in `CLAUDE.md`.
+The outside dependencies are the Claude and Codex log trees, the canonical
+filesystem store, and the DuckDB CLI. Both source adapters implement the same
+`ConversationSource` port; storage and export remain vendor-independent.
 
 ## Project Structure
 
@@ -40,35 +37,33 @@ internal/
     exporter.go             # Exporter
   adapters/
     cli/           # Driving adapter: cobra subcommands, one file each (thin shims)
+    codexsource/   # ConversationSource for active/archived Codex rollouts
     claudesource/  # ConversationSource for ~/.claude/projects (Claude Code)
     jsonlstore/    # CanonicalStore over afero: JSONL store + atomic swap
     duckdbcli/     # Exporter over the duckdb CLI subprocess (os/exec)
   testing/
     fakes/         # In-memory fakes for every port
     invariants/    # Structural checks + drift observations over a SessionDoc (contract tier's engine)
-    logfixture/    # Verbatim vendor log fixtures (never hand-edit)
-      scrub/       # Scrub engine: strips/replaces sensitive text in fixture JSONL
-  tools/
-    scrubfixture/  # CLI over logfixture/scrub, wired via `just scrub-fixture`
+    contracts/     # Local live-log checker; count-only reports
+    testlogs/      # Invented records generated in test-owned temporary directories
   version/
     version.go     # Version string (injectable via ldflags)
 tests/
   e2e/             # Black-box tests against the compiled binary (build tag e2e),
                    # one file per AC-ID category, plus the untagged coverage_test.go
   docs/            # Untagged: mechanical drift check between the docs and the tree
+  skills/          # Maintainer skills for test and contract validation
 docs/
   product/         # Product requirements (prd-mvp.md)
   technical/       # Technical design (tdd-mvp.md) — the nine core decisions live here
   adrs/            # Architecture Decision Records (currently empty — see "See also")
   architecture.md  # this document
-  testing.md       # four-tier test pyramid, fakes conventions, fixture provenance
+  testing.md       # four-tier test pyramid, fakes conventions, synthetic examples and local contracts
   acceptance.md    # observable contract; every AC-* ID maps to exactly one discharging test
   development.md   # dev setup and common tasks
 ```
 
-`claudesource`, `jsonlstore`, and `duckdbcli` have landed and are wired into
-`main.go`; `codexsource` is the one adapter this shape anticipates but does
-not yet have.
+`claudesource`, `codexsource`, `jsonlstore`, and `duckdbcli` are wired in `main.go`.
 
 ## Layering
 
@@ -111,7 +106,7 @@ reviewable by hand, so this is an accepted gap, not a hole to close.
 
 | Port | Purpose | Adapter | Fake |
 |---|---|---|---|
-| `ConversationSource` | enumerate session files for a vendor; parse one file into a normalized `SessionDoc` | `claudesource` (Codex: not yet implemented) | `fakes.FakeConversationSource` |
+| `ConversationSource` | enumerate session files for a vendor; parse one file into a normalized `SessionDoc` | `claudesource`, `codexsource` | `fakes.FakeConversationSource` |
 | `CanonicalStore` | the store's root path; begin a rebuild | `jsonlstore` (afero) | `fakes.FakeCanonicalStore` |
 | `StoreRebuild` | accumulate one pending store generation: `Put`, `Commit`, `Discard` | `jsonlstore`'s rebuild type | `fakes.FakeStoreRebuild` |
 | `Exporter` | materialize the canonical store into one sink | `duckdbcli` (`os/exec`) | `fakes.FakeExporter` |
@@ -162,16 +157,20 @@ guards only the two inputs no `Exporter` can proceed without, delegating
 everything else to the sink adapter. See `export.go:61-67`'s doc comment
 for the full rationale.
 
-**`Sync.Vendors()`** returns the sorted set of vendors this build actually
-has a registered source for — nil-receiver-safe, so a `Deps{}` built
-without a `Sync` in a CLI-tree test never needs a nil check. The CLI's bare
-`sync` fans out over `Vendors()` rather than a hardcoded vendor list, so a
-build with only `claudesource` wired syncs Claude only and exits 0; `sync
---vendor codex` fails loudly, naming what is available
-(`internal/adapters/cli/sync.go`'s `selectedVendors`). This is the
-deferred-Codex rule: once a `codexsource` adapter is registered in
-`main.go`, this rule needs no change — `Vendors()` picks it up
-automatically.
+**`Sync.Vendors()`** supplies the sorted source registry to CLI selection,
+help and validation. Both default fan-out and explicit selection use this list;
+a synthetic third-vendor test guards against a fixed two-vendor switch.
+
+**Scoped rebuilds** pass selected vendors to `BeginRebuild`. The store copies
+all unselected subtrees byte-for-byte into staging before accepting new docs,
+including vendors unavailable in this build. Copy failures abort before live
+writes; out-of-scope `Put` poisons commit. Commit retains the existing two-rename
+swap and rollback guarantees. Nil scope is an explicit full reset for direct
+store callers; a non-nil empty scope preserves everything and accepts no docs.
+
+Future OpenCode/Pi adapters need real format investigation. The existing port
+uses session-file paths; revisit that boundary if a future source needs session
+references into different storage. Codex record semantics stay in its adapter.
 
 ## Unified data model
 
@@ -189,6 +188,7 @@ vendor-to-model field mappings, and the `TIMESTAMPTZ` rationale live in
 | Adapter | Port | External dependency | Internal split |
 |---|---|---|---|
 | `cli` | — (driving) | `github.com/spf13/cobra` | One file per subcommand: `root.go`, `sync.go`, `export.go`, `export_duckdb.go`, `version.go` |
+| `codexsource` | `ConversationSource` | Codex rollout files, read-only | `codexsource.go` (discovery/reading), `normalize.go` (mapping) |
 | `claudesource` | `ConversationSource` | none (pure parsing) | `classify.go` (skip taxonomy), `normalize.go`, `record.go`, `sidechain.go` |
 | `jsonlstore` | `CanonicalStore`, `StoreRebuild` | `github.com/spf13/afero` | `naming.go` (id-to-path escaping), `rebuild.go` (staging + two-rename swap) |
 | `duckdbcli` | `Exporter` | `os/exec` (the `duckdb` CLI binary) | `script.go` (pure SQL generation), `duckdbcli.go` (subprocess + temp-dir-then-rename) |
@@ -199,7 +199,7 @@ in-memory filesystem) — including for its staging directory, created via
 `afero.TempDir(s.fs, s.root, stagingPrefix)` (`jsonlstore.go:125`), not
 `os.MkdirTemp`. Its only use of the `os` package is two `os.FileMode`
 constants, `dirMode`/`fileMode` (`jsonlstore.go:71-72`). `duckdbcli` and
-`claudesource` use `os`/`os/exec` directly — this table should not read as
+`claudesource` and `codexsource` use `os`/`os/exec` directly — this table should not read as
 "all filesystem access in this repo goes through afero."
 
 ## Wiring
@@ -212,7 +212,7 @@ concrete adapter. In order:
    backs the one logger every use case logs through; `--log-level`, if
    passed, later overwrites the same `LevelVar` in `PersistentPreRunE`.
 2. Resolve default paths (`defaultPaths()`) — pure path arithmetic, no I/O.
-3. Construct the concrete adapters: `claudesource.New(log)`,
+3. Construct the concrete adapters: `claudesource.New(log)`, `codexsource.New(log)`,
    `jsonlstore.New(fsys, paths.storeRoot, log)`, `duckdbcli.New(log)`.
 4. Construct the use cases (`sync.New`, `export.New`), injecting the ports
    they need.
@@ -265,9 +265,9 @@ rather than restated here.
 | 3 | Canonical store is JSONL, not a database | `internal/adapters/jsonlstore/` | `jsonlstore_test.go`, `jsonlstore_integration_test.go` |
 | 4 | DuckDB invoked as a subprocess behind a port, not CGO | `internal/adapters/duckdbcli/` (`os/exec`) | `duckdbcli_test.go`, `duckdbcli_integration_test.go` |
 | 5 | No in-tool query surface; denormalized export | `README.md`'s cookbook; `script.go`'s `scriptTail` joins | `TestCookbookQueriesMatchTheREADME`, `TestCookbookQueries`, AC-QUERY-05 |
-| 6 | `sync` is a full, atomic rebuild | `internal/core/sync/sync.go`; `jsonlstore/rebuild.go`'s staging + two-rename swap | AC-SYNC-03 (idempotent, no leftovers) |
+| 6 | `sync` rebuilds selected vendors in one staged generation | `internal/core/sync/sync.go`; `jsonlstore/rebuild.go`'s staging + two-rename swap | AC-SYNC-03 (idempotent, no leftovers) |
 | 7 | Lenient, lossless parsing | `model.SkipReason`; `claudesource/classify.go`; `sync.go`'s three-way severity split | AC-SKIP-01/02/03 |
-| 8 | Fixture-driven adapters, contract-tested against live logs | `internal/testing/logfixture/`; `claudesource_contract_test.go`; `internal/testing/invariants/` | golden tests in `claudesource`; `invariants_test.go` |
+| 8 | Synthetic regression tests plus local opt-in live contracts | `internal/testing/testlogs/`; `internal/testing/contracts/`; `internal/testing/invariants/` | adapter tests; checker tests; local live checks |
 | 9 | Local-only, sources read-only | no network client anywhere in the core or adapters; vendor dirs never written | AC-SCOPE-01/02/03 |
 
 ## Conventions
@@ -279,7 +279,7 @@ file per subcommand, wiring-only-in-`main.go`, and the rest — live in
 ## See also
 
 - `docs/testing.md` — the four-tier test pyramid, fakes conventions,
-  fixture provenance, and the AC-ID <-> test mapping this architecture
+  synthetic examples and local contracts, and the AC-ID <-> test mapping this architecture
   makes cheap to hold.
 - `docs/acceptance.md` — the observable contract every e2e test verifies.
 - `docs/technical/tdd-mvp.md` — the nine core decisions in full, the

@@ -17,7 +17,7 @@ import (
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/export"
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/sync"
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/ports"
-	"github.com/mattjmcnaughton/agent-logs-extractor/internal/testing/logfixture"
+	"github.com/mattjmcnaughton/agent-logs-extractor/internal/testing/testlogs"
 )
 
 // TestSyncCommandOverTheClaudeFixtureTree is the ticket's literal
@@ -41,13 +41,13 @@ func TestSyncCommandOverTheClaudeFixtureTree(t *testing.T) {
 	var out, errBuf bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&errBuf)
-	root.SetArgs([]string{"sync", "--claude-path", logfixture.ClaudeRoot()})
+	root.SetArgs([]string{"sync", "--claude-path", testlogs.ClaudeRoot(t)})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute: %v (stderr: %s)", err, errBuf.String())
 	}
 
-	want := "claude: 3 sessions, 15 messages, 4 tool calls, 23 records skipped\n"
+	want := "claude: 3 sessions, 15 messages, 4 tool calls, 4 records skipped\n"
 	if out.String() != want {
 		t.Errorf("stdout = %q, want %q", out.String(), want)
 	}

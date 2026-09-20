@@ -48,27 +48,41 @@ just gate
 just gate-expensive
 ```
 
+## Skills by audience
+
+| Skill | Audience and purpose | Source |
+| --- | --- | --- |
+| `agent-logs-extractor` | Users operating the CLI: import, export, and query history | `skills/agent-logs-extractor/SKILL.md` |
+| `validate-log-contracts` | Maintainers validating adapter assumptions and changing parser tests | `tests/skills/validate-log-contracts/SKILL.md` |
+
+Public skills live in `skills/`, with checkout discovery symlinks under
+`.agents/skills/` and `.claude/skills/`. Test-maintenance skills live in
+`tests/skills/`, with discovery symlinks under both `.agents/skills/` and
+`.claude/skills/`. They require repository development tooling and are not part
+of the public CLI workflow.
+
 ## Testing
 
 Tests use the stdlib `testing` package, in four tiers. See
 **`docs/testing.md`** for the full pyramid, build-tag conventions, fakes,
-fixture provenance, and the AC-ID mapping — this section covers only *how
+synthetic examples and local contracts, and the AC-ID mapping — this section covers only *how
 to invoke* the two opt-in tiers day to day.
 
 ### Contract tier
 
+Live contracts run only on your machine, never in CI. Set an explicit source
+root for each vendor you want to check:
+
 ```sh
-ALX_CONTRACT_CLAUDE_PATH=$(mktemp -d) just test-contract                             # skip path
-ALX_CONTRACT_CLAUDE_PATH=$PWD/internal/testing/logfixture/claude just test-contract   # found-logs path
+ALX_CONTRACT_CLAUDE_PATH=/explicit/claude/root just test-contract
+ALX_CONTRACT_CODEX_PATH=/explicit/codex/root just test-contract
 ```
 
-**Do not run `just test-contract` bare.** With `ALX_CONTRACT_CLAUDE_PATH`
-unset the test SKIPs outright rather than defaulting to any live
-`~/.claude` — always set it explicitly, one of the two ways above, or
-pointed at your own real `~/.claude` if you have Claude Code history to
-check it against. Never point it at another session's or another person's
-real history without their consent (`docs/testing.md`'s Contract tier
-section has the full rationale).
+With no variables set, the checks skip without reading live data. Setting `CI`
+also forces a skip. These variables are test-only, never CLI configuration.
+The internal [validate-log-contracts skill](../tests/skills/validate-log-contracts/SKILL.md)
+interprets coverage and drift. See [Live log contracts](log-contracts.md) for
+privacy boundaries and the limits of a passing check.
 
 ### E2E tier
 
@@ -133,3 +147,15 @@ go build -ldflags "-X github.com/mattjmcnaughton/agent-logs-extractor/internal/v
    existing (or new) `TestXxx` function anywhere in the repo; for `tier:
    container`, point it at a `just <recipe>` that exists in the justfile.
 4. Run `just test` — `TestACCoverage` is untagged and runs as part of it.
+
+## Codex development and future sources
+
+Use synthetic records to specify a mapping, then verify its assumptions against
+explicitly selected live logs locally. Do not add captured fixtures or derived
+JSON goldens. CI uses only invented data.
+
+Adding a source requires an adapter, registration/default root in `main.go`,
+its source-path flag, and synthetic-test/contract/e2e documentation. Selection already
+uses registered vendors; sync, store and DuckDB do not need vendor-specific
+branches. OpenCode and Pi are future work; inspect their real formats before
+assuming the current session-file-based source port fits them.

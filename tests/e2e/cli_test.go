@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mattjmcnaughton/agent-logs-extractor/internal/testing/logfixture"
+	"github.com/mattjmcnaughton/agent-logs-extractor/internal/testing/testlogs"
 )
 
 // AC-CLI-01
@@ -75,14 +75,14 @@ func TestAC_CLI_07_LogLevelEnvVar(t *testing.T) {
 	// set: the env var alone would not produce the debug breakdown.
 	flagWins := newSandbox(t)
 	flagWins.setEnv("AGENT_LOGS_EXTRACTOR_LOG_LEVEL", "warn")
-	res := flagWins.run("sync", "--claude-path", logfixture.ClaudeRoot(), "--log-level", "debug")
+	res := flagWins.run("sync", "--claude-path", testlogs.ClaudeRoot(t), "--log-level", "debug")
 	wantCode(t, res, 0)
 	wantStderrContains(t, res, `msg="sync: skipped records"`)
 
 	// AGENT_LOGS_EXTRACTOR_LOG_LEVEL alone (no flag) governs the level too.
 	envOnly := newSandbox(t)
 	envOnly.setEnv("AGENT_LOGS_EXTRACTOR_LOG_LEVEL", "debug")
-	res = envOnly.run("sync", "--claude-path", logfixture.ClaudeRoot())
+	res = envOnly.run("sync", "--claude-path", testlogs.ClaudeRoot(t))
 	wantCode(t, res, 0)
 	wantStderrContains(t, res, `msg="sync: skipped records"`)
 
@@ -90,7 +90,7 @@ func TestAC_CLI_07_LogLevelEnvVar(t *testing.T) {
 	// is a warning, not a hard error: exit 0, falls back to info.
 	invalid := newSandbox(t)
 	invalid.setEnv("AGENT_LOGS_EXTRACTOR_LOG_LEVEL", "bogus")
-	res = invalid.run("sync", "--claude-path", logfixture.ClaudeRoot())
+	res = invalid.run("sync", "--claude-path", testlogs.ClaudeRoot(t))
 	wantCode(t, res, 0)
 	wantStderrContains(t, res, `invalid AGENT_LOGS_EXTRACTOR_LOG_LEVEL "bogus"`)
 	if strings.Contains(res.stderr, "reason=") {

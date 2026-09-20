@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Parse AI coding agent conversation logs (Claude Code today; Codex not yet implemented — see below) into a unified, queryable data model
+Parse AI coding agent conversation logs (Claude Code and Codex) into a unified, queryable data model
 
 Go CLI built with strict hexagonal (ports-and-adapters) architecture: Cobra
 as the driving adapter, slog for logging, and the Go toolchain (gofmt, go
@@ -16,13 +16,12 @@ vet, go test).
 | `just test-integration` | Integration tests (`//go:build integration`) |
 | `just test-integration-container` | Integration tests inside `Dockerfile.duckdb`, network-isolated |
 | `just test-all` | Unit + integration |
-| `just test-contract` | Contract tests (`//go:build contract`); **requires `ALX_CONTRACT_CLAUDE_PATH`** — bare invocation SKIPs by design, never defaults to a real `~/.claude`. Opt-in, never gated. |
+| `just test-contract` | Contract tests (`//go:build contract`); **requires `ALX_CONTRACT_CLAUDE_PATH` or `ALX_CONTRACT_CODEX_PATH`** — bare invocation SKIPs by design, never defaults to a real `~/.claude`. Local-only, never CI or gated. |
 | `just test-e2e` | Black-box e2e suite (`//go:build e2e`) against the compiled binary |
 | `just test-e2e-container` | E2E suite inside `Dockerfile.duckdb`, network-isolated |
 | `just build` | Build binary to `bin/` |
 | `just run [args]` | Run via `go run` |
 | `just tidy` | Tidy dependencies |
-| `just scrub-fixture` | Scrub a real vendor session tree into a committable fixture |
 | `just gate` | Fast pre-push check: `fmt` + `vet` + `test` |
 | `just gate-expensive` | Full check: `gate` + `test-integration` |
 
@@ -34,7 +33,7 @@ and the unified data model (`model`), with zero infrastructure imports.
 `ConversationSource`, `CanonicalStore`/`StoreRebuild`, `Exporter`.
 **Adapters** (`internal/adapters/`) implement those ports — `claudesource`
 (Claude Code log parsing), `jsonlstore` (the JSONL canonical store over
-afero), `duckdbcli` (the DuckDB CLI subprocess), plus the driving `cli`
+afero), `duckdbcli` (the DuckDB CLI subprocess), `codexsource` (Codex rollout parsing), plus the driving `cli`
 adapter (cobra). **Wiring** in `cmd/agent-logs-extractor/main.go` is the
 only file that imports every concrete adapter; it reads the environment,
 constructs adapters, injects them into use cases, and hands those to the
@@ -49,9 +48,8 @@ cmd/agent-logs-extractor/main.go   # Wiring: env -> adapters -> use cases -> cob
 internal/
   core/                            # Pure: model, sync, export — zero infra imports
   ports/                           # Interfaces the core depends on
-  adapters/                        # cli, claudesource, jsonlstore, duckdbcli
-  testing/                         # fakes, invariants (contract tier's engine), logfixture
-  tools/scrubfixture/              # CLI over logfixture/scrub
+  adapters/                        # cli, claudesource, codexsource, jsonlstore, duckdbcli
+  testing/                         # fakes, invariants, contracts, testlogs
   version/
 tests/e2e/                         # Black-box tests against the compiled binary (build tag e2e)
 tests/docs/                        # Untagged: mechanical drift check between the docs and the tree
@@ -83,13 +81,20 @@ in `docs/architecture.md`.
 - **Fakes over mocks.** Hand-written in-memory fakes live in
   `internal/testing/fakes/`; tests assert on outcomes, never on call
   sequences.
-- **Fixtures are verbatim ground truth.** `internal/testing/logfixture/`
-  holds real (scrubbed) vendor log files — never hand-edit or move them.
-  Two documented exceptions live in `docs/testing.md`.
-- **Codex is not implemented.** `--codex-path` is accepted and stored but
-  never consulted; `sync --vendor codex` errors naming what is available.
+- **Skills have separate audiences.** The public `agent-logs-extractor` skill
+  in `skills/` operates the CLI. Checkout-only skills in `tests/skills/` support
+  test maintenance; `.agents/skills/` and `.claude/skills/` contain discovery
+  symlinks. See `docs/development.md`.
+- **Only synthetic test data belongs in the repository.** `internal/testing/testlogs/`
+  generates invented examples in temporary directories. Do not capture, scrub,
+  or commit live vendor logs or derived JSON goldens. Live format checks are
+  local-only and opt-in, never CI; see `docs/log-contracts.md` and the
+  `validate-log-contracts` skill.
+- **Codex is implemented.** `--codex-path` reads active and archived rollouts.
+  Vendor-specific sync preserves unselected vendor data. Registered sources
+  determine vendor selection; future sources must not require core switches.
 - **Four test tiers:** unit (no tag) / integration (`integration`) /
-  contract (`contract`, opt-in, requires `ALX_CONTRACT_CLAUDE_PATH`) / e2e
+  contract (`contract`, opt-in, requires `ALX_CONTRACT_CLAUDE_PATH` or `ALX_CONTRACT_CODEX_PATH`) / e2e
   (`e2e`, opt-in, black-box against the compiled binary). Every `AC-*` ID in
   `docs/acceptance.md` maps 1:1 to exactly one **discharging test** — 31 at
   the e2e tier, the rest at unit/integration/container — enforced by the
@@ -107,8 +112,7 @@ Progressive disclosure — pull in the relevant doc when the task touches it:
 - `docs/architecture.md` — hexagonal layout, port/adapter tables, use-case
   wiring, the nine core decisions. **Read before adding a new module, port,
   or adapter.**
-- `docs/testing.md` — four-tier pyramid, fakes conventions, fixture
-  provenance, the AC-ID <-> test mapping. **Read before writing tests
+- `docs/testing.md` — four-tier pyramid, fakes conventions, synthetic examples and local contracts, the AC-ID <-> test mapping. **Read before writing tests
   beyond a plain unit test.**
 - `docs/acceptance.md` — observable contract; every `AC-*` ID maps 1:1 to
   exactly one discharging test. **Read before changing user-visible

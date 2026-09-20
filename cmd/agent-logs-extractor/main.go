@@ -17,6 +17,7 @@ import (
 
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/adapters/claudesource"
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/adapters/cli"
+	"github.com/mattjmcnaughton/agent-logs-extractor/internal/adapters/codexsource"
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/adapters/duckdbcli"
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/adapters/jsonlstore"
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/export"
@@ -48,12 +49,9 @@ func main() {
 
 	paths := defaultPaths()
 
-	// Driven adapters land here as their tickets close:
-	//   sources: claudesource (landed, #6), codexsource (#10)
-	//   store:   jsonlstore   (landed, #7)
-	//   sinks:   duckdbcli    (landed, #9)
+	// Concrete source, store and sink adapters are wired only here.
 	fsys := afero.NewOsFs()
-	sources := []ports.ConversationSource{claudesource.New(log)}
+	sources := []ports.ConversationSource{claudesource.New(log), codexsource.New(log)}
 	var store ports.CanonicalStore = jsonlstore.New(fsys, paths.storeRoot, log)
 	exporters := []ports.Exporter{duckdbcli.New(log)}
 

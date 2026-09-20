@@ -31,23 +31,26 @@ agent-logs-extractor version
 
 ### `sync`
 
-Scan the vendor log directories, parse every session, and rebuild the canonical store from scratch. No incremental state, no watermarks — a full run over a year of history takes seconds, and the rebuild is atomic (the old store is swapped out only after the new one is complete).
+Scan the selected vendor log directories and rebuild their sessions in a staged store generation. Unselected vendors are copied unchanged before the completed generation replaces the old one. There is no incremental state or watermark.
 
 ```
 agent-logs-extractor sync
 agent-logs-extractor sync --vendor claude
+agent-logs-extractor sync --vendor codex --codex-path /backups/dotcodex
 agent-logs-extractor sync --claude-path /backups/dotclaude
 ```
 
 ```
 claude: 3 sessions, 15 messages, 4 tool calls, 23 records skipped
+codex: 3 sessions, 10 messages, 4 tool calls, 7 records skipped
 ```
 
 - A malformed line or an unrecognized record type is logged and skipped — one bad record never fails the run, and a session file that can't even be read (a permissions error, say) is likewise counted, not fatal. The one-line-per-vendor summary above reports how much was ingested and how much was skipped; the full skip breakdown by reason is available at `--log-level debug`.
 - A missing vendor directory is fine: that vendor simply contributes zero sessions.
 - `--vendor claude|codex` restricts the run to one source; `--claude-path` / `--codex-path` override the default log roots. There is no config file.
-- **`--vendor` rebuilds the whole store from that vendor alone.** `sync` is always a full rebuild (no incremental state), so `sync --vendor claude` replaces the *entire* canonical store with claude-only content, removing any other vendor's sessions that were in it. A bare `sync` (no `--vendor`) is the way to keep every vendor's sessions in the store together.
-- Codex support (`codexsource`) hasn't landed yet: a bare `sync` currently syncs Claude only, and `sync --vendor codex` errors, naming what's actually available. `--codex-path` is accepted and stored but not yet consulted.
+- `--vendor` refreshes only the selected vendor and preserves all other stored vendors, including ones unavailable in the current build. A bare `sync` refreshes all registered vendors. An empty or missing selected source removes that vendor's stale sessions.
+- Codex reads `sessions/` and `archived_sessions/` beneath its root. It supports function and custom tool calls, counts child threads separately, and excludes inherited history when a recorded boundary identifies it. Active copies take precedence over archived duplicates.
+- Codex developer/inter-agent messages become system context. Standalone tool calls have empty-text assistant messages so tool joins remain valid. Freeform tool input is a JSON string; structured output remains JSON text. A returned `exec` call can be `ok` even when a command inside it failed; status describes the outer invocation. Images remain in raw data and are not downloaded. Unknown records are counted and skipped.
 
 ### `export`
 
@@ -146,7 +149,7 @@ Log level is controlled by the `--log-level` persistent flag (debug, info, warn,
 
 - Provide a query language — the DuckDB CLI over the export is the query interface.
 - Tail or watch logs live — `sync` is batch; re-run it (or cron it) to pick up new sessions.
-- Track incremental state — every `sync` is a full, atomic rebuild.
+- Track incremental state — every `sync` rebuilds selected vendors into a staged generation.
 - Modify or garbage-collect the vendor log directories — sources are strictly read-only.
 - Send data anywhere — no telemetry, no cloud sync; sinks are local files.
 - Redact secrets — logs are ingested verbatim. Treat the store and exports with the same care as `~/.claude` itself.
@@ -155,9 +158,9 @@ Log level is controlled by the `--log-level` persistent flag (debug, info, warn,
 
 See [docs/development.md](docs/development.md) for setup instructions and common tasks.
 
-## Agent skill
+## Agent skills
 
-The [agent-logs-extractor skill](skills/agent-logs-extractor/SKILL.md) explains
+The public [agent-logs-extractor skill](skills/agent-logs-extractor/SKILL.md) explains
 how to use the CLI, discovers capabilities from its help and output, and
 translates natural-language requests into sync, export, and queries. For example: "Sync my Claude logs", "Export my store to
 ./logs.duckdb", or "Which projects have the most sessions?"
@@ -165,6 +168,12 @@ translates natural-language requests into sync, export, and queries. For example
 Its source lives in `skills/`, with relative symlinks under `.agents/skills/`
 and `.claude/skills/` for use from this checkout. The skill uses the existing CLI
 and DuckDB; it does not add a natural-language subcommand to the binary.
+
+For maintainers developing adapters, the checkout-only
+[validate-log-contracts skill](tests/skills/validate-log-contracts/SKILL.md)
+checks format assumptions against explicitly selected local logs. It requires the
+source checkout and test toolchain; see [local contract testing](docs/log-contracts.md).
+Users importing, exporting, or querying their history should use the public skill.
 
 ## License
 
