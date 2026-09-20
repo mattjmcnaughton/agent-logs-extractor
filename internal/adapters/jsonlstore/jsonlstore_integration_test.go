@@ -31,7 +31,7 @@ func TestSwapOnRealFilesystem(t *testing.T) {
 	ctx := context.Background()
 
 	// Generation 1: {A, B}.
-	r1, err := store.BeginRebuild(ctx)
+	r1, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestSwapOnRealFilesystem(t *testing.T) {
 	}
 
 	// Generation 2: {B'} only.
-	r2, err := store.BeginRebuild(ctx)
+	r2, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild gen2: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestDiscardOnRealFilesystem(t *testing.T) {
 	store := New(fsys, root, nil)
 	ctx := context.Background()
 
-	r1, err := store.BeginRebuild(ctx)
+	r1, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestDiscardOnRealFilesystem(t *testing.T) {
 	}
 	before := readFileMap(t, filepath.Join(root, "sessions"))
 
-	r2, err := store.BeginRebuild(ctx)
+	r2, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild gen2: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestPutRejectsVendorTraversalOnRealFilesystem(t *testing.T) {
 	store := New(fsys, root, nil)
 	ctx := context.Background()
 
-	r, err := store.BeginRebuild(ctx)
+	r, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestFsFailureMidWriteOnRealFilesystem(t *testing.T) {
 
 	plainStore := New(base, root, nil)
 	ctx := context.Background()
-	r1, err := plainStore.BeginRebuild(ctx)
+	r1, err := plainStore.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestFsFailureMidWriteOnRealFilesystem(t *testing.T) {
 	}
 	failStore := New(failing, root, nil)
 
-	r2, err := failStore.BeginRebuild(ctx)
+	r2, err := failStore.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild gen2: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestCommitRenameFailureRollsBackOnRealFilesystem(t *testing.T) {
 
 	plainStore := New(base, root, nil)
 	ctx := context.Background()
-	r1, err := plainStore.BeginRebuild(ctx)
+	r1, err := plainStore.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestCommitRenameFailureRollsBackOnRealFilesystem(t *testing.T) {
 	}
 	failStore := New(failing, root, nil)
 
-	r2, err := failStore.BeginRebuild(ctx)
+	r2, err := failStore.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild gen2: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestCommitAfterFailedPutRefusesToSwapOnRealFilesystem(t *testing.T) {
 
 	plainStore := New(base, root, nil)
 	ctx := context.Background()
-	r1, err := plainStore.BeginRebuild(ctx)
+	r1, err := plainStore.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestCommitAfterFailedPutRefusesToSwapOnRealFilesystem(t *testing.T) {
 	}
 	failStore := New(failing, root, nil)
 
-	r2, err := failStore.BeginRebuild(ctx)
+	r2, err := failStore.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild gen2: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestCommitAfterRejectedDocRefusesToSwapOnRealFilesystem(t *testing.T) {
 	store := New(fsys, root, nil)
 	ctx := context.Background()
 
-	r1, err := store.BeginRebuild(ctx)
+	r1, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestCommitAfterRejectedDocRefusesToSwapOnRealFilesystem(t *testing.T) {
 	}
 	before := readFileMap(t, filepath.Join(root, "sessions"))
 
-	r2, err := store.BeginRebuild(ctx)
+	r2, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild gen2: %v", err)
 	}
@@ -397,7 +397,7 @@ func TestCommitFailsWhenSessionsIsNotADirectoryOnRealFilesystem(t *testing.T) {
 		t.Fatalf("seeding sessions-as-a-file: %v", err)
 	}
 
-	r, err := store.BeginRebuild(ctx)
+	r, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -426,7 +426,7 @@ func TestLeftoverStagingSweptOnRealFilesystem(t *testing.T) {
 	store := New(fsys, root, nil)
 	ctx := context.Background()
 
-	r1, err := store.BeginRebuild(ctx)
+	r1, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -449,7 +449,7 @@ func TestLeftoverStagingSweptOnRealFilesystem(t *testing.T) {
 		t.Fatalf("seeding stale trash dir: %v", err)
 	}
 
-	r2, err := store.BeginRebuild(ctx)
+	r2, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -480,7 +480,7 @@ func TestModesAndSingleLineJSONOnRealFilesystem(t *testing.T) {
 	store := New(fsys, root, nil)
 	ctx := context.Background()
 
-	r, err := store.BeginRebuild(ctx)
+	r, err := store.BeginRebuild(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginRebuild: %v", err)
 	}
@@ -626,5 +626,30 @@ func assertStringSlicesEqual(t *testing.T, got, want []string) {
 	gotSorted, wantSorted := slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(want))
 	if !slices.Equal(gotSorted, wantSorted) {
 		t.Fatalf("got %v, want %v", gotSorted, wantSorted)
+	}
+}
+
+func TestScopedRebuildRejectsPreservedSymlink(t *testing.T) {
+	root := t.TempDir()
+	ctx := context.Background()
+	store := New(afero.NewOsFs(), root, nil)
+	commitDocs(t, store, doc("claude", "old", "keep"))
+	outside := filepath.Join(t.TempDir(), "private.json")
+	if err := os.WriteFile(outside, []byte("outside"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "sessions", "claude", "link.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BeginRebuild(ctx, []model.Vendor{"codex"}); err == nil {
+		t.Fatal("followed preserved symlink")
+	}
+	b, err := os.ReadFile(outside)
+	if err != nil || string(b) != "outside" {
+		t.Fatal("foreign file changed", err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "sessions" {
+		t.Fatal("staging not cleaned", err)
 	}
 }

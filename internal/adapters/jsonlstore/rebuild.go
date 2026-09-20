@@ -18,9 +18,10 @@ import (
 // hands one back as the port, and nothing outside this package can
 // construct one without a Store.
 type rebuild struct {
-	s       *Store
-	staging string // "" once the rebuild has finished (committed or discarded)
-	done    bool
+	s        *Store
+	staging  string // "" once the rebuild has finished (committed or discarded)
+	done     bool
+	selected map[model.Vendor]bool
 	// firstErr is the first error any Put or Commit on this rebuild
 	// produced. Once set, Commit refuses to swap: a rebuild that dropped
 	// even one doc must never overwrite a good previous generation with a
@@ -53,6 +54,9 @@ func (r *rebuild) Put(ctx context.Context, doc model.SessionDoc) error {
 }
 
 func (r *rebuild) put(doc model.SessionDoc) error {
+	if r.selected != nil && !r.selected[doc.Session.Vendor] {
+		return ports.ErrVendorOutsideRebuild
+	}
 	rel, err := relPath(doc.Session)
 	if err != nil {
 		return err

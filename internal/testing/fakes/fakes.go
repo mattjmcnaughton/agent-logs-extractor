@@ -125,17 +125,29 @@ func (s *FakeCanonicalStore) Root() string {
 // mirroring jsonlstore.Store.BeginRebuild, so a #8 core unit test written
 // against a cancelled context behaves the same against this fake as it
 // would against the real store.
-func (s *FakeCanonicalStore) BeginRebuild(ctx context.Context) (ports.StoreRebuild, error) {
+func (s *FakeCanonicalStore) BeginRebuild(ctx context.Context, vendors []model.Vendor) (ports.StoreRebuild, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if s.BeginErr != nil {
 		return nil, s.BeginErr
 	}
-	return &FakeStoreRebuild{
-		store:   s,
-		pending: make(map[string]model.SessionDoc),
-	}, nil
+	r := &FakeStoreRebuild{store: s, pending: make(map[string]model.SessionDoc)}
+	if vendors != nil {
+		r.selected = make(map[model.Vendor]bool, len(vendors))
+		for _, v := range vendors {
+			if !ports.ValidSessionDoc(model.Session{Vendor: v, SessionID: string(v) + ":scope"}) {
+				return nil, ports.ErrInvalidSessionDoc
+			}
+			r.selected[v] = true
+		}
+		for id, doc := range s.Committed {
+			if !r.selected[doc.Session.Vendor] {
+				r.pending[id] = doc
+			}
+		}
+	}
+	return r, nil
 }
 
 // SessionIDs is the sorted set of ids in the live store — a stable
@@ -146,9 +158,10 @@ func (s *FakeCanonicalStore) SessionIDs() []string {
 
 // FakeStoreRebuild implements ports.StoreRebuild.
 type FakeStoreRebuild struct {
-	store   *FakeCanonicalStore
-	pending map[string]model.SessionDoc
-	done    bool
+	store    *FakeCanonicalStore
+	pending  map[string]model.SessionDoc
+	done     bool
+	selected map[model.Vendor]bool
 	// firstErr is the first error any Put or Commit on this rebuild
 	// produced. Once set, Commit refuses to swap — mirrors jsonlstore's B1
 	// fix (rebuild.firstErr in the real adapter) so a lenient #8 sync loop
@@ -185,6 +198,10 @@ func (r *FakeStoreRebuild) Put(ctx context.Context, doc model.SessionDoc) error 
 	if !ports.ValidSessionDoc(doc.Session) {
 		r.recordErr(ErrInvalidSessionDoc)
 		return ErrInvalidSessionDoc
+	}
+	if r.selected != nil && !r.selected[doc.Session.Vendor] {
+		r.recordErr(ports.ErrVendorOutsideRebuild)
+		return ports.ErrVendorOutsideRebuild
 	}
 	r.pending[doc.Session.SessionID] = doc
 	return nil

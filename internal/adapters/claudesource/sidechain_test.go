@@ -10,7 +10,7 @@ import (
 
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/adapters/claudesource"
 	"github.com/mattjmcnaughton/agent-logs-extractor/internal/core/model"
-	"github.com/mattjmcnaughton/agent-logs-extractor/internal/testing/logfixture"
+	"github.com/mattjmcnaughton/agent-logs-extractor/internal/testing/testlogs"
 )
 
 // firstRecordUUID returns the uuid of the first record in path that has
@@ -50,7 +50,7 @@ func TestSidechainOrderAndParentLink(t *testing.T) {
 	src := claudesource.New(nil)
 	ctx := context.Background()
 
-	sessionPath, err := logfixture.SessionFile(logfixture.ClaudeSidechainProject)
+	sessionPath, err := testlogs.SessionFile(t, testlogs.ClaudeSidechainProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestSidechainOrderAndParentLink(t *testing.T) {
 		t.Fatal("expected an Agent tool call")
 	}
 
-	subFiles, err := logfixture.SubagentFiles(logfixture.ClaudeSidechainProject)
+	subFiles, err := testlogs.SubagentFiles(t, testlogs.ClaudeSidechainProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,12 +125,12 @@ func TestSidechainOrderAndParentLink(t *testing.T) {
 // directory (parent transcript, subagents/ transcript, and .meta.json
 // sidecar) into a fresh temp directory, so a test can mutate the copy —
 // removing the sidecar, breaking the agentId join, adding a second
-// subagent transcript — without ever touching the committed fixture. It
+// subagent transcript — without ever touching the synthetic example. It
 // returns the copied session file's path and its subagents/ directory.
 func copySidechainFixture(t *testing.T) (sessionPath, subagentDir string) {
 	t.Helper()
 
-	srcSession, err := logfixture.SessionFile(logfixture.ClaudeSidechainProject)
+	srcSession, err := testlogs.SessionFile(t, testlogs.ClaudeSidechainProject)
 	if err != nil {
 		t.Fatal(err)
 	}

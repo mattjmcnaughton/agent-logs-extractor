@@ -8,7 +8,7 @@ import (
 )
 
 // allZeroSummary is the exact stdout AC-VENDOR-01/02 pin.
-const allZeroSummary = "claude: 0 sessions, 0 messages, 0 tool calls, 0 records skipped\n"
+const allZeroSummary = "claude: 0 sessions, 0 messages, 0 tool calls, 0 records skipped\n" + codexZeroSummary
 
 // AC-VENDOR-01
 func TestAC_VENDOR_01_MissingVendorDirIsFine(t *testing.T) {
